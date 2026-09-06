@@ -1,0 +1,50 @@
+name: Collecte Hub'Eau
+
+on:
+  schedule:
+    # Toutes les 6 heures (heure UTC). Hub'Eau conservant un mois d'historique,
+    # cette frequence laisse une marge tres confortable en cas de panne.
+    - cron: "17 */6 * * *"
+  workflow_dispatch:        # permet aussi un declenchement manuel
+
+# Necessaire pour que l'action puisse pousser les donnees collectees.
+permissions:
+  contents: write
+
+# Deux executions simultanees se marcheraient dessus au moment du push.
+concurrency:
+  group: collecte
+  cancel-in-progress: false
+
+jobs:
+  collecter:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Recuperer le depot
+        uses: actions/checkout@v4
+
+      - name: Installer Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Installer les dependances
+        run: pip install requests
+
+      - name: Collecter les hauteurs
+        run: python collecte.py --depot donnees
+
+      - name: Publier les nouvelles mesures
+        run: |
+          if [ -z "$(git status --porcelain donnees)" ]; then
+            echo "Aucune nouvelle mesure, rien a publier."
+            exit 0
+          fi
+          git config user.name  "collecte-automatique"
+          git config user.email "actions@github.com"
+          git add donnees
+          git commit -m "Collecte du $(date -u '+%Y-%m-%d %H:%M') UTC"
+          # Une autre execution a pu pousser entre-temps : on rejoue par-dessus.
+          git pull --rebase --autostash
+          git push
