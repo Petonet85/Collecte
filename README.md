@@ -67,21 +67,22 @@ jeton** : l'ancien continuera de renvoyer `403`.
 
 ## Le problème de cadence du radar
 
-L'API `DPRadar` ne sert que le dernier pas de 5 minutes. Le workflow principal
-tourne toutes les 6 heures et n'en capte donc qu'**un sur 72** : de quoi vérifier
-que la chaîne fonctionne, pas de quoi reconstituer un cumul de pluie.
+L'API `DPRadar` ne sert que le dernier pas de 5 minutes. Le workflow `radar.yml`
+demande donc une exécution toutes les 5 minutes — mais **GitHub ne l'honore pas**.
 
-Trois façons d'y remédier, par ordre de préférence :
+Mesure du 08/09/2026, dépôt public, minutes illimitées : sur 74 minutes,
+**5 exécutions au lieu de 15**, à 12:35, 12:50, 13:00, 13:15 et 13:30. Le
+planificateur étrangle les crons fréquents à environ une exécution par quart
+d'heure. **Couverture réelle : 33 %.** Inexploitable pour reconstituer un cumul.
 
-1. **S'abonner à `DonneesPubliquesPaquetRadar`** sur le portail. Les API
-   « paquet » de Météo-France livrent un lot de produits récents plutôt qu'un
-   instantané ; si c'est le cas ici, une requête horaire suffirait à tout
-   récupérer. À vérifier une fois l'abonnement pris.
-2. **Lancer `radar.py --boucle 5` sur une machine allumée en permanence.**
-   Sur macOS, via un `launchd` (voir plus bas). Coût nul, fiabilité maximale.
-3. **Activer `.github/workflows/radar.yml`** (bloc `schedule` commenté). Couvre
-   100 % du temps, mais consomme ~1 440 minutes d'exécution par jour : viable
-   seulement si le dépôt est **public** (minutes illimitées).
+La parade n'est pas d'insister sur la cadence mais de changer de produit :
+**`DonneesPubliquesPaquetRadar` rend le dernier quart d'heure par appel**, soit
+exactement l'intervalle réel observé. La couverture passerait à près de 100 %,
+avec du recouvrement pour absorber les retards. C'est donc l'abonnement qui rend
+ce workflow utile, pas la fréquence demandée.
+
+À défaut, faire tourner `radar.py --boucle 5` sur une machine allumée en
+permanence reste la solution sûre.
 
 ### launchd (macOS)
 
