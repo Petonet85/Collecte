@@ -68,11 +68,21 @@ def assembler(prevision: dict, horizon_h: int = 72) -> dict:
     mnt = json.load(open(os.path.join(DOCS, "mnt_fin.json"), encoding="utf-8"))
     points = [(mnt["centre"][0], mnt["centre"][1])]
 
-    # --- observe : hauteur a l'echelle de Saint-Laurent, puis cote a Rochereau
-    h_obs = hb.hourly(hb.observations_tr("M703243010", "H", 20)).dropna()
+    # --- observe : on part du DEBIT amont, mesure en temps reel, et non de la
+    # hauteur a Saint-Laurent. La relation hauteur-debit de cette station n'est
+    # calee qu'au-dessus de 0,80 m ; en etiage elle renvoie un debit nul et la
+    # cote se fige au fond du lit, ce qui donne une courbe plate et fausse.
     t0 = pd.Timestamp(prevision["date_prevision"].replace(" ", "T").rstrip("Z"))
-    h_obs = h_obs.loc[t0 - pd.Timedelta(days=12):]
-    z_obs = sevre.niveau_rochereau(h_obs.to_numpy(dtype=float), courbe)
+    q_amont = None
+    for site in ("M7022410", "M7044010"):
+        q = hb.hourly(hb.observations_tr(site, "Q", 20)).dropna()
+        q_amont = q if q_amont is None else q_amont.add(q, fill_value=0.0)
+    q_amont = q_amont.loc[t0 - pd.Timedelta(days=12):] if q_amont is not None else pd.Series(dtype=float)
+    z_obs = (sevre.ROCHEREAU["z_fond"]
+             + sevre.ROCHEREAU["a"] * np.maximum(q_amont.to_numpy(dtype=float), 0.0)
+             ** sevre.ROCHEREAU["b"]) if len(q_amont) else np.array([])
+    h_obs = hb.hourly(hb.observations_tr("M703243010", "H", 20)).dropna()
+    h_obs = h_obs.reindex(q_amont.index).interpolate(limit=3) if len(q_amont) else h_obs
 
     radar = pluie_radar(t0)
     modele = pluie_modele(points)
@@ -92,8 +102,10 @@ def assembler(prevision: dict, horizon_h: int = 72) -> dict:
         "scenarios": [s for s in calage["scenarios"] if not s.get("ancre")],
         "reperes": [s for s in calage["scenarios"] if s.get("ancre")],
         "observe": {
-            "time": [d.isoformat() for d in h_obs.index],
-            "h_echelle": [round(float(v), 3) for v in h_obs.to_numpy()],
+            "time": [d.isoformat() for d in q_amont.index],
+            "q_amont": [round(float(v), 3) for v in q_amont.to_numpy()],
+            "h_echelle": [None if not np.isfinite(v) else round(float(v), 3)
+                          for v in h_obs.to_numpy()],
             "z_rochereau": [round(float(v), 3) for v in z_obs],
         },
         "prevision": {
