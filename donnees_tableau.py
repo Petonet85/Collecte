@@ -13,6 +13,7 @@ from __future__ import annotations
 import glob
 import json
 import os
+import time
 
 import numpy as np
 import pandas as pd
@@ -38,6 +39,15 @@ def pluie_radar(fin: pd.Timestamp, heures: int = HEURES_PASSEES) -> pd.Series:
     return horaire.loc[fin - pd.Timedelta(hours=heures):fin]
 
 
+def _fond_carte():
+    """Reseau hydrographique et communes, pour situer la pluie sur le bassin."""
+    chemin = os.path.join(DOCS, "fond_bassin.json")
+    if not os.path.exists(chemin):
+        return None
+    with open(chemin, encoding="utf-8") as fh:
+        return json.load(fh)
+
+
 def animation_radar(fin: pd.Timestamp, heures: int = HEURES_PASSEES) -> dict:
     """Vignettes radar des dernieres heures, pour l'animation sur le bassin.
 
@@ -48,10 +58,10 @@ def animation_radar(fin: pd.Timestamp, heures: int = HEURES_PASSEES) -> dict:
     em = np.asarray(bassin["emprise"], dtype=float)
     cadre = {"lon0": float(em[:, 0].min()), "lon1": float(em[:, 0].max()),
              "lat0": float(em[:, 1].min()), "lat1": float(em[:, 1].max()),
-             "facteur": 24.0, "n": 20}
+             "facteur": 24.0, "n": 32}
     contour = [[round(float(x), 4), round(float(y), 4)] for x, y in em[::3]]
     vide = {"images": prevision_grille(cadre), "emprise": cadre, "contour": contour,
-            "facteur": 24.0, "n_radar": 0}
+            "fond": _fond_carte(), "facteur": 24.0, "n_radar": 0}
 
     fichiers = sorted(glob.glob(os.path.join(BASE, "donnees", "radar", BASSIN_RADAR, "*.csv")))
     if not fichiers:
@@ -77,16 +87,19 @@ def animation_radar(fin: pd.Timestamp, heures: int = HEURES_PASSEES) -> dict:
         })
     images += prevision_grille(cadre)
     return {"images": images, "emprise": cadre, "contour": contour,
+            "fond": _fond_carte(),
             "facteur": 24.0, "n_radar": sum(1 for i in images if i.get("type") == "radar")}
 
 
 def prevision_grille(cadre, heures: int = 96) -> list:
     """Champs de pluie prevue sur le bassin, a la maille de la vignette.
 
-    Preleve la prevision AROME/ARPEGE en 20 x 20 points couvrant le bassin —
-    soit 1,5 km, la resolution native d'AROME — et l'encode comme les images
-    radar, pour que l'animation enchaine le passe mesure et l'avenir prevu
-    dans la meme unite : l'intensite en millimetres par heure.
+    Preleve la prevision AROME/ARPEGE sur la meme grille que la vignette radar
+    — 32 x 32 points, soit 875 m — et l'encode a l'identique, pour que
+    l'animation enchaine le passe mesure et l'avenir prevu dans la meme unite :
+    l'intensite en millimetres par heure. Le prelevement se fait par lots :
+    l'URL sature au-dela de quelques centaines de coordonnees, et le quota par
+    minute d'Open-Meteo se declenche vite sur un champ de mille points.
     """
     import radar as radar_mf
 
@@ -94,20 +107,36 @@ def prevision_grille(cadre, heures: int = 96) -> list:
     lons = np.linspace(cadre["lon0"], cadre["lon1"], n)
     lats = np.linspace(cadre["lat1"], cadre["lat0"], n)   # du nord au sud, comme l'image
     LO, LA = np.meshgrid(lons, lats)
-    try:
-        rep = requests.get(
-            "https://api.open-meteo.com/v1/forecast",
-            params={"latitude": ",".join(f"{v:.4f}" for v in LA.ravel()),
-                    "longitude": ",".join(f"{v:.4f}" for v in LO.ravel()),
-                    "hourly": "precipitation", "models": "meteofrance_seamless",
-                    "forecast_days": max(1, min(int(np.ceil(heures / 24)), 7)),
-                    "timezone": "UTC"},
-            headers={"User-Agent": "collecte-sevre-nantaise/2.0"}, timeout=120)
-        rep.raise_for_status()
-        lot = rep.json()
-    except Exception:
-        return []
-    if not isinstance(lot, list) or not lot:
+    # L'URL sature au-dela d'environ 400 coordonnees : on preleve par lots.
+    lat_p, lon_p = LA.ravel(), LO.ravel()
+    lot = []
+    for d in range(0, len(lat_p), 256):
+        tranche = slice(d, d + 256)
+        rep = None
+        for essai in range(3):
+            try:
+                rep = requests.get(
+                    "https://api.open-meteo.com/v1/forecast",
+                    params={"latitude": ",".join(f"{v:.4f}" for v in lat_p[tranche]),
+                            "longitude": ",".join(f"{v:.4f}" for v in lon_p[tranche]),
+                            "hourly": "precipitation", "models": "meteofrance_seamless",
+                            "forecast_days": max(1, min(int(np.ceil(heures / 24)), 4)),
+                            "timezone": "UTC"},
+                    headers={"User-Agent": "collecte-sevre-nantaise/2.0"}, timeout=120)
+                if rep.status_code == 429:
+                    # Quota par minute : un champ de mille points pese lourd.
+                    time.sleep(62)
+                    continue
+                rep.raise_for_status()
+                break
+            except Exception:
+                time.sleep(8 * (essai + 1))
+                rep = None
+        if rep is None or rep.status_code != 200:
+            return []
+        part = rep.json()
+        lot += part if isinstance(part, list) else [part]
+    if not lot:
         return []
     temps = pd.to_datetime(lot[0]["hourly"]["time"])
     champ = np.array([x["hourly"]["precipitation"] for x in lot], dtype=float)
