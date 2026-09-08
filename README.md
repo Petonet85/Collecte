@@ -109,6 +109,26 @@ Trois façons d'y remédier, par ordre de préférence :
 launchctl load ~/Library/LaunchAgents/local.collecte-radar.plist
 ```
 
+## Sources et licence
+
+Ce dépôt **rediffuse** des données publiques. Elles restent la propriété de leurs
+producteurs et sont republiées ici sous leurs licences respectives.
+
+| Donnée | Producteur | Licence |
+|---|---|---|
+| Hauteurs, débits (Hub'Eau hydrométrie) | SCHAPI / OFB — Eaufrance | Licence Ouverte 2.0 |
+| Niveaux de nappe (Hub'Eau piézométrie / ADES) | BRGM / OFB — Eaufrance | Licence Ouverte 2.0 |
+| Lame d'eau radar (API DPRadar) | **Météo-France** | Licence Ouverte 2.0 |
+| Emprises de bassin (`bassins.json`, dérivé du RGE ALTI) | **IGN** | Licence Ouverte 2.0 |
+
+La Licence Ouverte autorise la réutilisation et la rediffusion, y compris
+commerciale, à condition de mentionner la source et la date de mise à jour.
+Les fichiers de `donnees/` sont des données dérivées : rééchantillonnées pour la
+piézométrie, moyennées sur le bassin versant pour la lame d'eau radar. Elles ne
+sauraient être présentées comme des données brutes de leurs producteurs.
+
+Le code de ce dépôt est libre d'usage.
+
 ## Détails techniques
 
 **Doublons Hub'Eau.** Interrogé par code site, Hub'Eau renvoie chaque mesure de
