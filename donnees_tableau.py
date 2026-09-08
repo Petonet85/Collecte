@@ -40,12 +40,13 @@ def pluie_radar(fin: pd.Timestamp, heures: int = HEURES_PASSEES) -> pd.Series:
 
 
 def _fond_carte():
-    """Reseau hydrographique et communes, pour situer la pluie sur le bassin."""
-    chemin = os.path.join(DOCS, "fond_bassin.json")
-    if not os.path.exists(chemin):
-        return None
-    with open(chemin, encoding="utf-8") as fh:
-        return json.load(fh)
+    """Reperes ponctuels de l'animation.
+
+    Le fond de carte lui-meme vient des tuiles IGN, chargees par la page : les
+    dessiner a partir de vecteurs embarques coutait 60 ko pour un resultat
+    moins lisible qu'un Plan IGN, et sans photo aerienne.
+    """
+    return {"cible": {"n": "Rochereau", "lon": -0.99276, "lat": 47.000408}}
 
 
 def animation_radar(fin: pd.Timestamp, heures: int = HEURES_PASSEES) -> dict:
