@@ -5,10 +5,8 @@ on:
     # Toutes les 6 heures (heure UTC). Hub'Eau conservant un mois d'historique,
     # cette frequence laisse une marge tres confortable en cas de panne.
     #
-    # ATTENTION : ce rythme ne convient PAS a la lame d'eau radar, dont l'API
-    # ne sert que le dernier pas de 5 minutes. On n'en capte ici qu'un cliche
-    # toutes les 6 h, soit 1 pas sur 72 — de quoi verifier que la chaine
-    # fonctionne, pas de quoi reconstituer un cumul de pluie. Voir le README.
+    # La lame d'eau radar est desormais captee a part, toutes les 5 minutes,
+    # par radar.yml : son API ne sert que le dernier pas de temps.
     - cron: "17 */6 * * *"
   workflow_dispatch:        # permet aussi un declenchement manuel
 
@@ -38,10 +36,8 @@ jobs:
       - name: Installer les dependances
         run: pip install -r requirements.txt
 
-      - name: Collecter hauteurs, debits, nappes et lame d'eau
-        env:
-          METEOFRANCE_API_KEY: ${{ secrets.METEOFRANCE_API_KEY }}
-        run: python collecte.py --depot donnees --radar
+      - name: Collecter hauteurs, debits et nappes
+        run: python collecte.py --depot donnees
 
       - name: Publier les nouvelles mesures
         run: |

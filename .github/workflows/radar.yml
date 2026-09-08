@@ -1,36 +1,38 @@
-name: Lame d'eau radar (haute frequence)
+name: Lame d'eau radar
 
-# Workflow OPTIONNEL, volontairement non planifie par defaut.
+# L'API DPRadar ne sert que le dernier pas de 5 minutes : ce qui n'est pas capte
+# est perdu pour toujours. D'ou une capture toutes les 5 minutes, cadence minimale
+# autorisee par le planificateur de GitHub.
 #
-# L'API DPRadar ne sert que le dernier pas de 5 minutes : pour reconstituer un
-# cumul de pluie exploitable, il faut interroger toutes les 5 minutes. Ce job
-# tourne alors en continu pendant 30 minutes et capture les 6 pas de la periode ;
-# planifie toutes les 30 minutes, il couvre 100 % du temps.
+# Choix de conception : un run court par pas de temps, plutot qu'un job qui boucle
+# une demi-heure. A couverture egale, cela occupe un runner 20 % du temps au lieu
+# de 100 %, et un run perdu ne coute que 5 minutes de donnees au lieu de trente.
+# Les minutes sont gratuites sur un depot public, mais monopoliser un runner en
+# continu sortirait de l'usage auquel Actions est destine.
 #
-# Cout : environ 1 440 minutes d'execution par jour. Sur un depot PRIVE, elles
-# sont facturees au-dela des 2 000 minutes mensuelles offertes — le quota part
-# en un jour et demi. Deux facons de s'en sortir :
-#   * rendre le depot public : les minutes deviennent illimitees ;
-#   * lancer radar.py sur une machine allumee en permanence (voir le README).
-#
-# Pour activer malgre tout, decommentez le bloc schedule.
+# Le planificateur de GitHub retarde ou abandonne des executions en periode de
+# charge : quelques trous sont a prevoir et sont acceptes. L'abonnement a
+# DonneesPubliquesPaquetRadar les comblerait, chaque appel rendant le dernier
+# quart d'heure, donc trois pas de temps au lieu d'un.
 
 on:
+  schedule:
+    - cron: "*/5 * * * *"
   workflow_dispatch:
-  # schedule:
-  #   - cron: "*/30 * * * *"
 
 permissions:
   contents: write
 
+# Un run en retard ne doit pas se superposer au suivant ni le faire attendre :
+# la donnee du pas de temps courant prime sur celle qu'on a deja ratee.
 concurrency:
   group: radar
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   radar:
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: 8
 
     steps:
       - uses: actions/checkout@v4
@@ -42,20 +44,25 @@ jobs:
 
       - run: pip install -r requirements.txt
 
-      - name: Capturer la lame d'eau toutes les 5 minutes
+      - name: Capturer la lame d'eau
         env:
           METEOFRANCE_API_KEY: ${{ secrets.METEOFRANCE_API_KEY }}
-        run: python radar.py --depot donnees --boucle 5 --duree 30
+        run: python radar.py --depot donnees
 
       - name: Publier
         run: |
           if [ -z "$(git status --porcelain donnees)" ]; then
-            echo "Rien a publier."
+            echo "Pas de nouveau pas de temps."
             exit 0
           fi
           git config user.name  "collecte-automatique"
           git config user.email "actions@github.com"
           git add donnees
-          git commit -m "Lame d'eau radar du $(date -u '+%Y-%m-%d %H:%M') UTC"
-          git pull --rebase --autostash
-          git push
+          git commit -m "Lame d'eau radar $(date -u '+%Y-%m-%dT%H:%MZ')"
+          # Le collecteur Hub'Eau pousse aussi : on rejoue par-dessus plutot que
+          # d'echouer, et on retente une fois si la course se repete.
+          for essai in 1 2 3; do
+            git pull --rebase --autostash -q && git push -q && exit 0
+            sleep $((essai * 5))
+          done
+          exit 1
