@@ -1,0 +1,315 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""Lame d'eau radar Meteo-France, moyennee sur un bassin versant.
+
+L'API DPRadar ne sert que le dernier pas de 5 minutes : rien n'est conserve.
+Une donnee non captee est perdue definitivement. D'ou ce module, concu pour
+etre appele aussi souvent que possible et n'archiver qu'un nombre par pas de
+temps : la lame d'eau moyenne sur le bassin, soit une cinquantaine d'octets
+au lieu des 2 Mo de la grille nationale.
+
+    python radar.py                     # capture le pas de temps courant
+    python radar.py --boucle 5          # capture en continu, toutes les 5 min
+    python radar.py --bassin M702241010
+
+La cle se lit dans METEOFRANCE_API_KEY, ou a defaut dans ~/.config/floodcast/env.
+"""
+
+import argparse
+import csv
+import gzip
+import io
+import json
+import os
+import sys
+import time
+from datetime import datetime, timezone
+
+import numpy as np
+import requests
+
+BASE = os.path.dirname(os.path.abspath(__file__))
+API = "https://public-api.meteofrance.fr/public/DPRadar/v1"
+ZONE = "METROPOLE"
+PRODUIT = "LAME_D_EAU"
+MAILLE = 500          # 500 m -> HDF5 ODIM lisible avec h5py ; 1000 m -> BUFR (eccodes)
+
+ENTETES = {"Accept": "*/*", "User-Agent": "collecte-sevre-nantaise/2.0"}
+
+# La passerelle Meteo-France coupe son point d'entree ("303001 SUSPENDED") des
+# qu'on l'interroge trop vite. On reessaie largement espace plutot que d'insister.
+ATTENTES = (20, 45, 90, 120)
+
+
+# --------------------------------------------------------------------------- #
+# Cle d'API
+# --------------------------------------------------------------------------- #
+
+def charger_cle():
+    cle = os.environ.get("METEOFRANCE_API_KEY", "").strip()
+    if cle:
+        return cle
+    chemin = os.path.expanduser("~/.config/floodcast/env")
+    if os.path.exists(chemin):
+        with open(chemin) as f:
+            for ligne in f:
+                if ligne.startswith("METEOFRANCE_API_KEY="):
+                    return ligne.split("=", 1)[1].strip()
+    return None
+
+
+# --------------------------------------------------------------------------- #
+# Projection stereographique polaire de la mosaique ODIM
+# --------------------------------------------------------------------------- #
+
+RAYON = 6378137.0                     # demi-grand axe WGS84
+APLAT = 1 / 298.257223563
+EXC = np.sqrt(2 * APLAT - APLAT * APLAT)
+LAT_TS = np.radians(45.0)             # latitude de reference de la mosaique
+
+
+def _projeter(lon, lat):
+    """Coordonnees stereographiques polaires nord (lon_0 = 0, lat_ts = 45).
+
+    Formules EPSG 9810. On ne se sert pas des faux Est/Nord du fichier : la
+    grille est calee sur son coin superieur gauche, ce qui rend le calcul
+    independant des conventions de l'emetteur.
+    """
+    lon = np.radians(np.asarray(lon, dtype=float))
+    lat = np.radians(np.asarray(lat, dtype=float))
+    t = np.tan(np.pi / 4 - lat / 2) / ((1 - EXC * np.sin(lat)) / (1 + EXC * np.sin(lat))) ** (EXC / 2)
+    t_ref = np.tan(np.pi / 4 - LAT_TS / 2) / (
+        (1 - EXC * np.sin(LAT_TS)) / (1 + EXC * np.sin(LAT_TS))) ** (EXC / 2)
+    m_ref = np.cos(LAT_TS) / np.sqrt(1 - EXC ** 2 * np.sin(LAT_TS) ** 2)
+    rho = RAYON * m_ref * t / t_ref
+    return rho * np.sin(lon), -rho * np.cos(lon)
+
+
+def masque_bassin(where, emprise, surface_km2):
+    """Indices des pixels radar couvrant le bassin.
+
+    L'emprise est une liste de points ; on retient les pixels situes a moins
+    d'un rayon du point le plus proche, ce rayon etant ajuste pour que la
+    surface masquee colle a la surface officielle du bassin. Le masque se
+    calibre donc tout seul, sans dependre de la finesse de l'emprise fournie.
+    """
+    ulx, uly = _projeter(float(where["UL_lon"]), float(where["UL_lat"]))
+    sx, sy = float(where["xscale"]), float(where["yscale"])
+    bx, by = _projeter([p[0] for p in emprise], [p[1] for p in emprise])
+
+    marge = 6
+    c0 = max(int((bx.min() - ulx) / sx) - marge, 0)
+    c1 = min(int((bx.max() - ulx) / sx) + marge + 1, int(where["xsize"]))
+    l0 = max(int((uly - by.max()) / sy) - marge, 0)
+    l1 = min(int((uly - by.min()) / sy) + marge + 1, int(where["ysize"]))
+
+    cols, lignes = np.meshgrid(np.arange(c0, c1), np.arange(l0, l1))
+    px = ulx + (cols + 0.5) * sx
+    py = uly - (lignes + 0.5) * sy
+    d2 = np.min((px[..., None] - bx) ** 2 + (py[..., None] - by) ** 2, axis=-1)
+
+    aire_pixel = sx * sy / 1e6                      # km2 par pixel
+    cible = surface_km2 / aire_pixel                # nombre de pixels vise
+    ordre = np.sort(d2.ravel())
+    seuil = ordre[min(int(cible), len(ordre) - 1)]
+    masque = d2 <= seuil
+    return {"l0": l0, "l1": l1, "c0": c0, "c1": c1, "masque": masque,
+            "surface_masque_km2": round(float(masque.sum() * aire_pixel), 1)}
+
+
+# --------------------------------------------------------------------------- #
+# Acces a l'API
+# --------------------------------------------------------------------------- #
+
+def _get(url, cle, params=None, essais=4, timeout=120):
+    entetes = dict(ENTETES, apikey=cle)
+    derniere = None
+    for i in range(essais):
+        try:
+            r = requests.get(url, headers=entetes, params=params, timeout=timeout)
+        except Exception as e:
+            derniere = f"{type(e).__name__}"
+            time.sleep(ATTENTES[min(i, len(ATTENTES) - 1)])
+            continue
+        if r.status_code == 200:
+            return r
+        derniere = f"HTTP {r.status_code} {r.text[:120]}"
+        # 403 = abonnement absent, 401 = cle invalide : reessayer ne sert a rien.
+        if r.status_code in (401, 403):
+            break
+        time.sleep(ATTENTES[min(i, len(ATTENTES) - 1)])
+    raise RuntimeError(derniere or "echec inconnu")
+
+
+def derniere_grille(cle, maille=MAILLE):
+    """(instant de validite, contenu binaire) de la mosaique la plus recente."""
+    meta = _get(f"{API}/mosaiques/{ZONE}/observations/{PRODUIT}", cle).json()
+    instant = None
+    for lien in meta.get("links", []):
+        if f"maille={maille}" in lien.get("href", ""):
+            instant = lien.get("validity_time")
+            break
+    r = _get(f"{API}/mosaiques/{ZONE}/observations/{PRODUIT}/produit", cle,
+             params={"maille": maille})
+    contenu = r.content
+    if contenu[:2] == b"\x1f\x8b":
+        contenu = gzip.decompress(contenu)
+    return instant, contenu
+
+
+# --------------------------------------------------------------------------- #
+# Extraction
+# --------------------------------------------------------------------------- #
+
+def lame_bassin(contenu, emprise, surface_km2, cache_masque=None):
+    """Lame d'eau moyenne (mm) sur le bassin, pour le pas de temps du fichier."""
+    import h5py
+
+    with h5py.File(io.BytesIO(contenu), "r") as f:
+        where = dict(f["where"].attrs)
+        if cache_masque is None or cache_masque.get("_signature") != (
+                float(where["UL_lon"]), float(where["xscale"]), int(where["xsize"])):
+            cache_masque = masque_bassin(where, emprise, surface_km2)
+            cache_masque["_signature"] = (float(where["UL_lon"]), float(where["xscale"]),
+                                          int(where["xsize"]))
+        m = cache_masque
+        jeu = f["dataset1/data1"]
+        att = jeu["what"].attrs
+        bloc = jeu["data"][m["l0"]:m["l1"], m["c0"]:m["c1"]].astype(float)[m["masque"]]
+
+        gain, offset = float(att["gain"]), float(att["offset"])
+        nodata, undetect = float(att["nodata"]), float(att["undetect"])
+        valides = bloc != nodata
+        # "undetect" = le radar a regarde et n'a rien vu : c'est un vrai zero,
+        # a ne surtout pas confondre avec "nodata" (pas de mesure du tout).
+        pluie = np.where(bloc == undetect, 0.0, bloc * gain + offset)
+
+        qualite = None
+        if "quality1" in jeu:
+            qa = jeu["quality1"]["what"].attrs
+            qbloc = jeu["quality1"]["data"][m["l0"]:m["l1"], m["c0"]:m["c1"]].astype(float)[m["masque"]]
+            qualite = float(np.mean(qbloc[valides] * float(qa["gain"]) + float(qa["offset"]))) \
+                if valides.any() else None
+
+        quoi = f["dataset1/what"].attrs
+        dec = lambda v: v.decode() if isinstance(v, bytes) else str(v)
+        debut = f"{dec(quoi['startdate'])}{dec(quoi['starttime'])}"
+        fin = f"{dec(quoi['enddate'])}{dec(quoi['endtime'])}"
+        instant = datetime.strptime(fin, "%Y%m%d%H%M%S").replace(tzinfo=timezone.utc)
+        duree = (datetime.strptime(fin, "%Y%m%d%H%M%S")
+                 - datetime.strptime(debut, "%Y%m%d%H%M%S")).total_seconds() / 60
+
+    if not valides.any():
+        return None, cache_masque
+    return {
+        "instant_utc": instant.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "duree_min": int(round(duree)),
+        "lame_mm": round(float(pluie[valides].mean()), 4),
+        "lame_max_mm": round(float(pluie[valides].max()), 3),
+        "pixels": int(valides.sum()),
+        "couverture": round(float(valides.mean()), 3),
+        "qualite": None if qualite is None else round(qualite, 3),
+    }, cache_masque
+
+
+# --------------------------------------------------------------------------- #
+# Archivage
+# --------------------------------------------------------------------------- #
+
+COLONNES = ["instant_utc", "duree_min", "lame_mm", "lame_max_mm", "pixels",
+            "couverture", "qualite"]
+
+
+def ecrire(mesure, code_bassin, dossier):
+    """Ajoute une mesure au CSV mensuel du bassin. Idempotent sur l'instant."""
+    chemin = os.path.join(dossier, "radar", code_bassin,
+                          f"{mesure['instant_utc'][:7]}.csv")
+    os.makedirs(os.path.dirname(chemin), exist_ok=True)
+
+    existant = {}
+    if os.path.exists(chemin):
+        with open(chemin, newline="") as f:
+            for ligne in csv.DictReader(f):
+                existant[ligne["instant_utc"]] = ligne
+    if mesure["instant_utc"] in existant:
+        return False
+
+    existant[mesure["instant_utc"]] = {c: mesure.get(c, "") for c in COLONNES}
+    with open(chemin, "w", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=COLONNES)
+        w.writeheader()
+        for instant in sorted(existant):
+            w.writerow(existant[instant])
+    return True
+
+
+def collecter(bassins, dossier, cle, caches=None):
+    """Capture le pas de temps courant pour chaque bassin. Une seule requete."""
+    caches = caches if caches is not None else {}
+    instant, contenu = derniere_grille(cle)
+    resultats = []
+    for code, bassin in bassins.items():
+        mesure, caches[code] = lame_bassin(contenu, bassin["emprise"],
+                                           bassin["surface_km2"], caches.get(code))
+        if mesure is None:
+            resultats.append((code, None, False))
+            continue
+        nouveau = ecrire(mesure, code, dossier)
+        resultats.append((code, mesure, nouveau))
+    return instant, resultats, caches
+
+
+def main(argv=None):
+    p = argparse.ArgumentParser(description="Lame d'eau radar moyennee par bassin")
+    p.add_argument("--depot", default=os.path.join(BASE, "donnees"),
+                   help="dossier d'archivage")
+    p.add_argument("--bassins", default=os.path.join(BASE, "bassins.json"))
+    p.add_argument("--bassin", help="ne traiter qu'un bassin (code station)")
+    p.add_argument("--boucle", type=int, metavar="MINUTES",
+                   help="capture en continu a cet intervalle (5 = pas natif du radar)")
+    p.add_argument("--duree", type=int, metavar="MINUTES",
+                   help="avec --boucle : duree totale avant de rendre la main")
+    args = p.parse_args(argv)
+
+    cle = charger_cle()
+    if not cle:
+        print("  METEOFRANCE_API_KEY absente : collecte radar ignoree.")
+        return 0
+
+    with open(args.bassins, encoding="utf-8") as f:
+        bassins = json.load(f)
+    if args.bassin:
+        bassins = {args.bassin: bassins[args.bassin]}
+
+    fin = time.time() + args.duree * 60 if args.duree else None
+    caches = {}
+    total = 0
+    while True:
+        horodatage = datetime.now(timezone.utc).strftime("%H:%M")
+        try:
+            instant, resultats, caches = collecter(bassins, args.depot, cle, caches)
+            for code, mesure, nouveau in resultats:
+                if mesure is None:
+                    print(f"  [{horodatage}] {code} : aucun pixel valide")
+                    continue
+                total += int(nouveau)
+                etat = "archive" if nouveau else "deja connu"
+                print(f"  [{horodatage}] {code} {mesure['instant_utc']} : "
+                      f"{mesure['lame_mm']:.3f} mm/{mesure['duree_min']}min "
+                      f"(max {mesure['lame_max_mm']:.2f}, qualite {mesure['qualite']}) — {etat}")
+        except Exception as e:
+            print(f"  [{horodatage}] ECHEC radar : {e}")
+            if not args.boucle:
+                return 1
+        if not args.boucle:
+            break
+        if fin and time.time() >= fin:
+            break
+        time.sleep(args.boucle * 60)
+
+    print(f"  radar : {total} pas de temps ajoutes")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
