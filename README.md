@@ -76,13 +76,15 @@ planificateur étrangle les crons fréquents à environ une exécution par quart
 d'heure. **Couverture réelle : 33 %.** Inexploitable pour reconstituer un cumul.
 
 La parade n'est pas d'insister sur la cadence mais de changer de produit :
-**`DonneesPubliquesPaquetRadar` rend le dernier quart d'heure par appel**, soit
-exactement l'intervalle réel observé. La couverture passerait à près de 100 %,
-avec du recouvrement pour absorber les retards. C'est donc l'abonnement qui rend
-ce workflow utile, pas la fréquence demandée.
+**`radar.py` interroge désormais `DonneesPubliquesPaquetRadar`**, qui rend le
+dernier quart d'heure par appel — trois pas de temps au lieu d'un. Cette fenêtre
+recouvre l'intervalle réellement obtenu du planificateur : les retards sont
+absorbés au lieu d'être subis.
 
-À défaut, faire tourner `radar.py --boucle 5` sur une machine allumée en
-permanence reste la solution sûre.
+Le mode est choisi par `--mode` : `paquet` (défaut via `auto`), `simple` pour le
+dernier pas de 5 minutes, `auto` qui tente le paquet et retombe sur le simple si
+l'abonnement manque. L'archivage étant idempotent sur l'instant de validité, les
+recouvrements ne créent aucun doublon.
 
 ### launchd (macOS)
 

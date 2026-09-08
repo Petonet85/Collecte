@@ -15,14 +15,16 @@ name: Lame d'eau radar
 # une couverture de 33 %. Le planificateur etrangle les crons frequents a environ
 # une execution par quart d'heure, quoi qu'on lui demande.
 #
-# C'est inexploitable pour un cumul de pluie : deux tiers des pas de temps
-# manquent. La parade n'est pas d'insister sur la cadence, mais de changer de
-# produit : DonneesPubliquesPaquetRadar rend le dernier QUART D'HEURE par appel,
-# soit exactement la cadence reelle observee ici. La couverture passerait de
-# 33 % a pres de 100 %, avec du recouvrement pour absorber les retards.
+# C'etait inexploitable pour un cumul de pluie : deux tiers des pas de temps
+# manquaient. La parade n'est pas d'insister sur la cadence mais de changer de
+# produit : radar.py interroge desormais DonneesPubliquesPaquetRadar, qui rend
+# le dernier QUART D'HEURE par appel, soit trois pas de temps. Cette fenetre
+# recouvre l'intervalle reellement obtenu du planificateur, et absorbe donc les
+# retards au lieu de les subir.
 #
-# On garde donc "*/5" — plus on demande d'executions, plus on en obtient — mais
-# c'est le passage au paquet qui rend ce workflow reellement utile.
+# On garde "*/5" : plus on demande d'executions, plus on en obtient, et chaque
+# execution supplementaire ne fait que du recouvrement — jamais de doublon,
+# l'archivage etant idempotent sur l'instant de validite.
 
 on:
   schedule:

@@ -21,7 +21,9 @@ import gzip
 import io
 import json
 import os
+import re
 import sys
+import tarfile
 import time
 from datetime import datetime, timezone
 
@@ -30,9 +32,15 @@ import requests
 
 BASE = os.path.dirname(os.path.abspath(__file__))
 API = "https://public-api.meteofrance.fr/public/DPRadar/v1"
+PAQUET = "https://public-api.meteofrance.fr/public/DPPaquetRadar"
 ZONE = "METROPOLE"
 PRODUIT = "LAME_D_EAU"
 MAILLE = 500          # 500 m -> HDF5 ODIM lisible avec h5py ; 1000 m -> BUFR (eccodes)
+
+# Dans le paquet, chaque produit porte un code OMM. IPRN20 est la lame d'eau
+# (ACRR) metropole au pas de 500 m : la meme grille que DPRadar, en trois
+# exemplaires correspondant aux trois derniers pas de cinq minutes.
+CODE_LAME_METROPOLE = "IPRN20"
 
 ENTETES = {"Accept": "*/*", "User-Agent": "collecte-sevre-nantaise/2.0"}
 
@@ -141,6 +149,27 @@ def _get(url, cle, params=None, essais=4, timeout=120):
     raise RuntimeError(derniere or "echec inconnu")
 
 
+def paquet_grilles(cle):
+    """Les trois dernieres grilles de lame d'eau metropole, via l'API paquet.
+
+    Un seul appel rend le dernier quart d'heure. C'est ce qui rend la collecte
+    viable sur GitHub Actions : le planificateur n'y honore pas les cadences
+    inferieures au quart d'heure, mesure a l'appui (33 % de couverture en mode
+    simple). Une fenetre de quinze minutes recouvre l'intervalle reellement
+    obtenu, et absorbe donc les retards au lieu de les subir.
+    """
+    reponse = _get(f"{PAQUET}/mosaique/paquet", cle, timeout=180)
+    archive = tarfile.open(fileobj=io.BytesIO(reponse.content), mode="r:gz")
+    grilles = []
+    for membre in archive.getmembers():
+        if CODE_LAME_METROPOLE not in membre.name or not membre.name.endswith(".h5"):
+            continue
+        horodatage = re.search(r"(\d{14})", membre.name)
+        contenu = archive.extractfile(membre).read()
+        grilles.append((horodatage.group(1) if horodatage else None, contenu))
+    return sorted(grilles, key=lambda g: g[0] or "")
+
+
 def derniere_grille(cle, maille=MAILLE):
     """(instant de validite, contenu binaire) de la mosaique la plus recente."""
     meta = _get(f"{API}/mosaiques/{ZONE}/observations/{PRODUIT}", cle).json()
@@ -243,20 +272,36 @@ def ecrire(mesure, code_bassin, dossier):
     return True
 
 
-def collecter(bassins, dossier, cle, caches=None):
-    """Capture le pas de temps courant pour chaque bassin. Une seule requete."""
+def collecter(bassins, dossier, cle, caches=None, mode="auto"):
+    """Capture les pas de temps disponibles pour chaque bassin.
+
+    `mode` : "paquet" (le dernier quart d'heure), "simple" (le dernier pas de
+    cinq minutes), ou "auto" qui tente le paquet et retombe sur le simple si
+    l'abonnement manque.
+    """
     caches = caches if caches is not None else {}
-    instant, contenu = derniere_grille(cle)
+    grilles = []
+    if mode in ("auto", "paquet"):
+        try:
+            grilles = paquet_grilles(cle)
+        except Exception as e:  # noqa: BLE001 - abonnement absent ou service indisponible
+            if mode == "paquet":
+                raise
+            print(f"    (paquet indisponible : {str(e)[:70]} — repli sur le pas simple)")
+    if not grilles:
+        instant, contenu = derniere_grille(cle)
+        grilles = [(instant, contenu)]
+
     resultats = []
-    for code, bassin in bassins.items():
-        mesure, caches[code] = lame_bassin(contenu, bassin["emprise"],
-                                           bassin["surface_km2"], caches.get(code))
-        if mesure is None:
-            resultats.append((code, None, False))
-            continue
-        nouveau = ecrire(mesure, code, dossier)
-        resultats.append((code, mesure, nouveau))
-    return instant, resultats, caches
+    for _, contenu in grilles:
+        for code, bassin in bassins.items():
+            mesure, caches[code] = lame_bassin(contenu, bassin["emprise"],
+                                               bassin["surface_km2"], caches.get(code))
+            if mesure is None:
+                resultats.append((code, None, False))
+                continue
+            resultats.append((code, mesure, ecrire(mesure, code, dossier)))
+    return len(grilles), resultats, caches
 
 
 def main(argv=None):
@@ -269,6 +314,8 @@ def main(argv=None):
                    help="capture en continu a cet intervalle (5 = pas natif du radar)")
     p.add_argument("--duree", type=int, metavar="MINUTES",
                    help="avec --boucle : duree totale avant de rendre la main")
+    p.add_argument("--mode", choices=("auto", "paquet", "simple"), default="auto",
+                   help="paquet = dernier quart d'heure ; simple = dernier pas de 5 min")
     args = p.parse_args(argv)
 
     cle = charger_cle()
@@ -287,16 +334,17 @@ def main(argv=None):
     while True:
         horodatage = datetime.now(timezone.utc).strftime("%H:%M")
         try:
-            instant, resultats, caches = collecter(bassins, args.depot, cle, caches)
+            n_grilles, resultats, caches = collecter(bassins, args.depot, cle,
+                                                     caches, args.mode)
             for code, mesure, nouveau in resultats:
                 if mesure is None:
                     print(f"  [{horodatage}] {code} : aucun pixel valide")
                     continue
                 total += int(nouveau)
                 etat = "archive" if nouveau else "deja connu"
-                print(f"  [{horodatage}] {code} {mesure['instant_utc']} : "
+                print(f"  [{horodatage}] {code} {mesure['instant_utc'][11:16]} : "
                       f"{mesure['lame_mm']:.3f} mm/{mesure['duree_min']}min "
-                      f"(max {mesure['lame_max_mm']:.2f}, qualite {mesure['qualite']}) — {etat}")
+                      f"(max {mesure['lame_max_mm']:.2f}, q {mesure['qualite']}) — {etat}")
         except Exception as e:
             print(f"  [{horodatage}] ECHEC radar : {e}")
             if not args.boucle:
