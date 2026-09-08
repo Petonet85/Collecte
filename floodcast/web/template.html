@@ -1,0 +1,486 @@
+<title>__TITLE__</title>
+<style>
+:root{
+  --bg:#f6f6f4; --panel:#ffffff; --ink:#16181d; --muted:#6b7280; --line:#e3e4e8;
+  --accent:#1f4e79; --accent-soft:#dbe7f3;
+  --obs:#111418; --sim:#9aa2ad; --med:#1f4e79;
+  --band1:rgba(31,78,121,.30); --band2:rgba(31,78,121,.18); --band3:rgba(31,78,121,.09);
+  --rain:#4b7fa8; --nappe:#7a5c3e;
+  --t2:#5b8c3a; --t10:#c8891f; --t50:#b03a2e;
+  --ok:#3f7a3f; --warn:#b8860b; --alert:#b03a2e;
+  --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,monospace;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --bg:#111317; --panel:#171a1f; --ink:#e8eaee; --muted:#9aa2ad; --line:#272b32;
+  --accent:#6ea8dc; --accent-soft:#1d2b38;
+  --obs:#f2f4f7; --sim:#6b7280;--med:#6ea8dc;
+  --band1:rgba(110,168,220,.34); --band2:rgba(110,168,220,.20); --band3:rgba(110,168,220,.10);
+  --rain:#7fb2d6; --nappe:#c09a72;
+  --t2:#7fb05a; --t10:#e0a63a; --t50:#e06c5c;
+  --ok:#7fb05a; --warn:#e0a63a; --alert:#e06c5c;
+}}
+:root[data-theme="dark"]{
+  --bg:#111317; --panel:#171a1f; --ink:#e8eaee; --muted:#9aa2ad; --line:#272b32;
+  --accent:#6ea8dc; --accent-soft:#1d2b38;
+  --obs:#f2f4f7; --sim:#6b7280; --med:#6ea8dc;
+  --band1:rgba(110,168,220,.34); --band2:rgba(110,168,220,.20); --band3:rgba(110,168,220,.10);
+  --rain:#7fb2d6; --nappe:#c09a72;
+  --t2:#7fb05a; --t10:#e0a63a; --t50:#e06c5c;
+  --ok:#7fb05a; --warn:#e0a63a; --alert:#e06c5c;
+}
+*{box-sizing:border-box}
+body{background:var(--bg);color:var(--ink);font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;margin:0}
+.wrap{max-width:1180px;margin:0 auto;padding:22px 18px 60px}
+header{display:flex;flex-wrap:wrap;gap:16px;align-items:flex-end;justify-content:space-between;margin-bottom:18px}
+h1{font-size:22px;font-weight:650;margin:0;letter-spacing:-.01em}
+h1 small{display:block;font-size:13px;font-weight:400;color:var(--muted);margin-top:3px;letter-spacing:0}
+h2{font-size:13px;font-weight:650;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin:0 0 12px}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px 18px;margin-bottom:16px}
+.grid{display:grid;gap:16px}
+/* Sans min-width:0 une grille laisse un canvas dimensionne en px elargir sa piste,
+   ce qui fait deborder toute la page horizontalement au redimensionnement. */
+.grid>*{min-width:0}
+@media(min-width:820px){.grid.two{grid-template-columns:1fr 1fr}.grid.three{grid-template-columns:repeat(3,1fr)}}
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:10px;margin-bottom:16px}
+.kpi{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px 14px}
+.kpi .lab{font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted)}
+.kpi .val{font-size:22px;font-weight:650;font-variant-numeric:tabular-nums;margin-top:2px}
+.kpi .sub{font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums}
+.badge{display:inline-flex;align-items:center;gap:7px;border-radius:999px;padding:5px 13px;font-weight:600;font-size:13px;border:1px solid}
+.badge i{width:9px;height:9px;border-radius:50%;background:currentColor;display:block}
+.b-ok{color:var(--ok);border-color:color-mix(in srgb,var(--ok) 40%,transparent);background:color-mix(in srgb,var(--ok) 10%,transparent)}
+.b-warn{color:var(--warn);border-color:color-mix(in srgb,var(--warn) 40%,transparent);background:color-mix(in srgb,var(--warn) 12%,transparent)}
+.b-alert{color:var(--alert);border-color:color-mix(in srgb,var(--alert) 45%,transparent);background:color-mix(in srgb,var(--alert) 12%,transparent)}
+.chart{width:100%;display:block}
+.tabs{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden}
+.tabs button{border:0;background:transparent;color:var(--muted);padding:5px 14px;font:inherit;font-size:12.5px;cursor:pointer}
+.tabs button[aria-selected="true"]{background:var(--accent-soft);color:var(--ink);font-weight:600}
+.legend{display:flex;flex-wrap:wrap;gap:14px;font-size:12px;color:var(--muted);margin-top:8px}
+.legend span{display:inline-flex;align-items:center;gap:6px}
+.sw{width:15px;height:3px;border-radius:2px;display:block}
+table{width:100%;border-collapse:collapse;font-size:13px;font-variant-numeric:tabular-nums}
+th,td{text-align:right;padding:7px 8px;border-bottom:1px solid var(--line)}
+th:first-child,td:first-child{text-align:left}
+th{font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);font-weight:600}
+tbody tr:last-child td{border-bottom:0}
+.bar{height:6px;border-radius:3px;background:var(--line);position:relative;overflow:hidden;min-width:60px}
+.bar b{position:absolute;inset:0 auto 0 0;background:var(--accent);border-radius:3px}
+.note{font-size:12.5px;color:var(--muted);line-height:1.6}
+.scroll{overflow-x:auto}
+details{border-top:1px solid var(--line);padding-top:12px;margin-top:4px}
+summary{cursor:pointer;font-size:13px;font-weight:600;color:var(--muted)}
+dl{display:grid;grid-template-columns:auto 1fr;gap:4px 14px;margin:12px 0 0;font-size:13px}
+dt{color:var(--muted)}
+dd{margin:0;font-variant-numeric:tabular-nums}
+.tt{position:fixed;pointer-events:none;background:var(--panel);border:1px solid var(--line);border-radius:7px;padding:8px 11px;font-size:12px;box-shadow:0 6px 18px rgba(0,0,0,.14);opacity:0;transition:opacity .1s;z-index:9;font-variant-numeric:tabular-nums;white-space:nowrap}
+footer{color:var(--muted);font-size:12px;border-top:1px solid var(--line);padding-top:14px;margin-top:26px}
+code{font-family:var(--mono);font-size:12px;background:var(--accent-soft);padding:1px 5px;border-radius:4px}
+</style>
+
+<div class="wrap">
+<header>
+  <h1 id="title">—<small id="subtitle"></small></h1>
+  <div style="display:flex;gap:10px;align-items:center">
+    <span id="status" class="badge b-ok"><i></i><span>—</span></span>
+    <div class="tabs" role="tablist">
+      <button id="tab-h" role="tab" aria-selected="true">Hauteur</button>
+      <button id="tab-q" role="tab" aria-selected="false">Débit</button>
+    </div>
+  </div>
+</header>
+
+<div class="kpis" id="kpis"></div>
+
+<div class="panel">
+  <h2>Hydrogramme — observation, réanalyse et prévision probabiliste</h2>
+  <canvas id="main" class="chart" height="420"></canvas>
+  <div class="legend">
+    <span><i class="sw" style="background:var(--obs)"></i>observé</span>
+    <span><i class="sw" style="background:var(--sim);opacity:.8"></i>modèle rejoué</span>
+    <span><i class="sw" style="background:var(--med)"></i>médiane prévue</span>
+    <span><i class="sw" style="background:var(--band1);height:9px"></i>50 % / 80 % / 90 % des scénarios</span>
+    <span><i class="sw" style="background:var(--rain);height:9px"></i>pluie de bassin (mm/h)</span>
+    <span><i class="sw" style="background:var(--t10)"></i>seuils de période de retour</span>
+  </div>
+</div>
+
+<div class="grid two">
+  <div class="panel">
+    <h2>Probabilité de dépassement sur l'échéance</h2>
+    <div class="scroll"><table id="thresholds"></table></div>
+    <p class="note" id="thr-note"></p>
+  </div>
+  <div class="panel">
+    <h2>Stations amont — temps de propagation</h2>
+    <div class="scroll"><table id="upstream"></table></div>
+    <p class="note" id="up-note"></p>
+  </div>
+</div>
+
+<div class="grid two">
+  <div class="panel">
+    <h2>Nappe souterraine — état de saturation</h2>
+    <canvas id="nappe" class="chart" height="180"></canvas>
+    <p class="note" id="nappe-note"></p>
+  </div>
+  <div class="panel">
+    <h2>Bassin versant — emprise et relief</h2>
+    <canvas id="basin" class="chart" height="180"></canvas>
+    <p class="note" id="basin-note"></p>
+  </div>
+</div>
+
+<div class="panel" id="valid-panel" hidden>
+  <h2>Compétence validée — rejeu sur années non utilisées au calage</h2>
+  <div class="scroll"><table id="validation"></table></div>
+  <p class="note" id="valid-note"></p>
+  <div id="episodes"></div>
+</div>
+
+<div class="panel">
+  <h2>Diagnostic — ce que vaut cette prévision</h2>
+  <div class="grid three" id="diag"></div>
+  <details><summary>Détail technique du modèle</summary><dl id="diag-detail"></dl></details>
+</div>
+
+<footer id="footer"></footer>
+</div>
+<div class="tt" id="tt"></div>
+
+<script>
+const DATA = __DATA__;
+const $ = s => document.querySelector(s);
+const fmt = (v,d=1) => v==null||!isFinite(v) ? "—" : Number(v).toLocaleString("fr-FR",{minimumFractionDigits:d,maximumFractionDigits:d});
+const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+/* Un debit d'etiage a 4 m³/s merite une decimale, une crue a 1 500 m³/s n'en a que faire. */
+const fq = v => fmt(v, v==null||!isFinite(v) ? 0 : Math.abs(v)<10 ? 2 : Math.abs(v)<100 ? 1 : 0);
+let MODE = "H";
+
+/* ------------------------------------------------------------------ series */
+const P = DATA.prevision, O = DATA.observe, R = DATA.pluie;
+const tObs = O.time.map(s=>new Date(s+"Z")), tPrev = P.time.map(s=>new Date(s+"Z"));
+const t0 = new Date(DATA.meta.date_prevision);
+const hasH = P.H && P.H["50"];
+
+function series(){
+  const q = MODE==="Q" || !hasH;
+  return {
+    unit: q?"m³/s":"m",
+    dec: q?0:2,
+    label: q?"Débit":"Hauteur",
+    obs: q?O.Q:null,
+    obsH: q?null:O.H, obsHt: q?null:O.H_time.map(s=>new Date(s+"Z")),
+    sim: q?O.Q_simule:null,
+    med: q?P.Q["50"]:P.H["50"],
+    bands: [["5","95"],["10","90"],["25","75"]].map(([a,b])=>[q?P.Q[a]:P.H[a], q?P.Q[b]:P.H[b]]),
+    thr: Object.entries(DATA.seuils.depassements).map(([k,v])=>({k, v:q?v.debit:v.hauteur, p:v.proba_max}))
+         .filter(d=>d.v!=null)
+  };
+}
+
+/* ------------------------------------------------------------------ canvas */
+function setup(cv, h){
+  const dpr = window.devicePixelRatio||1, w = cv.parentElement.clientWidth-2;
+  cv.width = w*dpr; cv.height = h*dpr; cv.style.width=w+"px"; cv.style.height=h+"px";
+  const c = cv.getContext("2d"); c.setTransform(dpr,0,0,dpr,0,0); c.clearRect(0,0,w,h);
+  return {c,w,h};
+}
+function niceTicks(lo,hi,n=5){
+  const span=(hi-lo)||1, raw=span/n, mag=Math.pow(10,Math.floor(Math.log10(raw)));
+  const step=[1,2,2.5,5,10].find(s=>s*mag>=raw)*mag;
+  const out=[]; for(let v=Math.ceil(lo/step)*step; v<=hi+1e-9; v+=step) out.push(v);
+  return out;
+}
+function drawMain(){
+  const S = series();
+  const {c,w,h} = setup($("#main"), 420);
+  const L=52,Rp=14,T=12,B=30, rainH=78, gapH=10;
+  const plotT=T+rainH+gapH, plotB=h-B, plotH=plotB-plotT;
+  const x0=tObs[0]||t0, x1=tPrev[tPrev.length-1]||t0;
+  const X = d => L + (d-x0)/(x1-x0)*(w-L-Rp);
+
+  /* --- échelle verticale hydrogramme */
+  let vals=[...S.bands[0][0],...S.bands[0][1],...(S.obs||[]),...(S.obsH||[])].filter(v=>v!=null&&isFinite(v));
+  S.thr.forEach(d=>{ if(d.p>0.02) vals.push(d.v); });
+  let lo=Math.min(...vals), hi=Math.max(...vals); const pad=(hi-lo)*0.12||0.5;
+  lo-=pad; hi+=pad; if(MODE==="Q"||!hasH) lo=Math.max(0,lo);
+  const Y = v => plotB - (v-lo)/(hi-lo)*plotH;
+
+  /* --- pluie (axe inversé en haut) */
+  const rp = R.prev["50"]||[], rp9 = R.prev["90"]||rp;
+  const rmax = Math.max(0.5, ...R.passe, ...rp9);
+  const RY = v => T + rainH - (v/rmax)*rainH;
+  const tRainP = R.passe_time.map(s=>new Date(s+"Z")), tRainF = R.prev_time.map(s=>new Date(s+"Z"));
+  const bw = Math.max(1.2, (w-L-Rp)/((x1-x0)/3.6e6)-0.6);
+  c.fillStyle=css("--rain");
+  c.globalAlpha=.75; R.passe.forEach((v,i)=>{ if(v>0) c.fillRect(X(tRainP[i])-bw/2, RY(v), bw, T+rainH-RY(v)); });
+  c.globalAlpha=.45; rp9.forEach((v,i)=>{ if(v>0) c.fillRect(X(tRainF[i])-bw/2, RY(v), bw, T+rainH-RY(v)); });
+  c.globalAlpha=.9;  rp.forEach((v,i)=>{ if(v>0) c.fillRect(X(tRainF[i])-bw/2, RY(v), bw, T+rainH-RY(v)); });
+  c.globalAlpha=1;
+  c.strokeStyle=css("--line"); c.lineWidth=1;
+  c.beginPath(); c.moveTo(L,T+rainH+.5); c.lineTo(w-Rp,T+rainH+.5); c.stroke();
+  c.fillStyle=css("--muted"); c.font="10px "+css("--mono");
+  c.textAlign="right"; c.fillText(fmt(rmax,1)+" mm/h", L-6, T+10);
+  c.fillText("0", L-6, T+rainH);
+
+  /* --- grille + axes */
+  c.strokeStyle=css("--line"); c.fillStyle=css("--muted"); c.font="11px system-ui";
+  niceTicks(lo,hi).forEach(v=>{
+    const y=Y(v); if(y<plotT-2||y>plotB+2) return;
+    c.globalAlpha=.55; c.beginPath(); c.moveTo(L,y+.5); c.lineTo(w-Rp,y+.5); c.stroke(); c.globalAlpha=1;
+    c.textAlign="right"; c.fillText(fmt(v,S.dec), L-7, y+4);
+  });
+  c.save(); c.translate(13, (plotT+plotB)/2); c.rotate(-Math.PI/2);
+  c.textAlign="center"; c.fillText(S.label+" ("+S.unit+")",0,0); c.restore();
+  const days=[]; for(let d=new Date(x0); d<=x1; d.setUTCHours(0,0,0,0), d.setUTCDate(d.getUTCDate()+1)) days.push(new Date(d));
+  const every=Math.ceil(days.length/9);
+  days.forEach((d,i)=>{ if(i%every) return; const x=X(d); if(x<L)return;
+    c.globalAlpha=.4; c.beginPath(); c.moveTo(x+.5,plotT); c.lineTo(x+.5,plotB); c.stroke(); c.globalAlpha=1;
+    c.textAlign="center"; c.fillText(d.toLocaleDateString("fr-FR",{day:"2-digit",month:"2-digit",timeZone:"UTC"}), x, plotB+16); });
+
+  /* --- seuils de période de retour */
+  S.thr.forEach(d=>{
+    const y=Y(d.v); if(y<plotT||y>plotB) return;
+    const T_=+d.k.slice(1);
+    c.strokeStyle = T_<=5?css("--t2"):T_<=20?css("--t10"):css("--t50");
+    c.setLineDash([5,4]); c.lineWidth=1.2;
+    c.beginPath(); c.moveTo(L,y+.5); c.lineTo(w-Rp,y+.5); c.stroke(); c.setLineDash([]);
+    c.fillStyle=c.strokeStyle; c.textAlign="left"; c.font="10px "+css("--mono");
+    c.fillText("T="+T_+" ans", L+5, y-4); c.font="11px system-ui";
+  });
+
+  /* --- faisceau de prévision */
+  const bandCols=[css("--band3"),css("--band2"),css("--band1")];
+  S.bands.slice().reverse().forEach((b,i)=>{
+    c.fillStyle=bandCols[i]; c.beginPath();
+    b[0].forEach((v,j)=>{ const x=X(tPrev[j]),y=Y(v); j?c.lineTo(x,y):c.moveTo(x,y); });
+    for(let j=b[1].length-1;j>=0;j--) c.lineTo(X(tPrev[j]),Y(b[1][j]));
+    c.closePath(); c.fill();
+  });
+
+  /* --- traits */
+  const line=(xs,ys,col,wd,dash)=>{ c.strokeStyle=col; c.lineWidth=wd; c.setLineDash(dash||[]);
+    c.beginPath(); let started=false;
+    ys.forEach((v,i)=>{ if(v==null||!isFinite(v)){started=false;return;}
+      const x=X(xs[i]),y=Y(v); started?c.lineTo(x,y):c.moveTo(x,y); started=true; });
+    c.stroke(); c.setLineDash([]); };
+  if(S.sim) line(tObs,S.sim,css("--sim"),1.3,[4,3]);
+  line(tObs, S.obs||[], css("--obs"),1.9);
+  if(S.obsH) line(S.obsHt,S.obsH,css("--obs"),1.9);
+  line(tPrev,S.med,css("--med"),2.1);
+
+  /* --- instant de prévision */
+  c.strokeStyle=css("--muted"); c.setLineDash([3,3]); c.lineWidth=1;
+  c.beginPath(); c.moveTo(X(t0)+.5,T); c.lineTo(X(t0)+.5,plotB); c.stroke(); c.setLineDash([]);
+  c.fillStyle=css("--muted"); c.font="10px "+css("--mono"); c.textAlign="left";
+  c.fillText("maintenant", X(t0)+5, plotT+11);
+
+  window._main={X,Y,L,Rp,plotT,plotB,x0,x1,S,w};
+}
+
+/* ------------------------------------------------------------------ tooltip */
+$("#main").addEventListener("mousemove", e=>{
+  const m=window._main; if(!m) return;
+  const r=e.target.getBoundingClientRect(), px=e.clientX-r.left;
+  if(px<m.L||px>m.w-m.Rp) return $("#tt").style.opacity=0;
+  const d=new Date(+m.x0+(px-m.L)/(m.w-m.L-m.Rp)*(m.x1-m.x0));
+  const S=m.S, tt=$("#tt");
+  let html="", idx;
+  if(d<=t0){ idx=nearest(tObs,d);
+    const o=S.obs?S.obs[idx]:(S.obsH?S.obsH[nearest(S.obsHt,d)]:null);
+    html=`<b>${fdate(d)}</b><br>observé ${fmt(o,S.dec)} ${S.unit}`+
+         (S.sim?`<br>modèle ${fmt(S.sim[idx],S.dec)} ${S.unit}`:"");
+  } else { idx=nearest(tPrev,d);
+    html=`<b>${fdate(tPrev[idx])}</b> · +${Math.round((tPrev[idx]-t0)/3.6e6)} h<br>`+
+      `médiane <b>${fmt(S.med[idx],S.dec)}</b> ${S.unit}<br>`+
+      `80 % : ${fmt(S.bands[1][0][idx],S.dec)} – ${fmt(S.bands[1][1][idx],S.dec)}<br>`+
+      `90 % : ${fmt(S.bands[0][0][idx],S.dec)} – ${fmt(S.bands[0][1][idx],S.dec)}`;
+    const wp=P.poids_propagation&&P.poids_propagation[idx];
+    if(wp>0.05) html+=`<br><span style="color:var(--muted)">poids amont ${Math.round(wp*100)} %</span>`;
+  }
+  tt.innerHTML=html; tt.style.opacity=1;
+  tt.style.left=Math.min(e.clientX+14, innerWidth-190)+"px"; tt.style.top=(e.clientY-10)+"px";
+});
+$("#main").addEventListener("mouseleave",()=>$("#tt").style.opacity=0);
+const nearest=(arr,d)=>{ let b=0,bd=Infinity; arr.forEach((x,i)=>{const v=Math.abs(x-d); if(v<bd){bd=v;b=i;}}); return b; };
+const fdate=d=>d.toLocaleString("fr-FR",{day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit",timeZone:"UTC"})+" UTC";
+
+/* ------------------------------------------------------------------ panneaux */
+function kpis(){
+  const S=series(), lastQ=O.Q[O.Q.length-1], lastH=O.H&&O.H[O.H.length-1];
+  const med=P.Q["50"], peak=Math.max(...med), peakI=med.indexOf(peak);
+  const peakH=hasH?P.H["50"][peakI]:null;
+  const tend=peak>lastQ*1.15?"↗ hausse":peak<lastQ*0.85?"↘ baisse":"→ stable";
+  const rt=DATA.seuils.periodes_retour, worst=maxProb();
+  $("#kpis").innerHTML=[
+    ["Niveau actuel", lastH!=null?fmt(lastH,2)+" m":fq(lastQ)+" m³/s",
+      lastH!=null?fq(lastQ)+" m³/s":"débit temps réel"],
+    ["Pic prévu (médiane)", fq(peak)+" m³/s",
+      (peakH!=null?fmt(peakH,2)+" m · ":"")+"+"+(peakI+1)+" h · "+tend],
+    ["Pluie prévue sur le bassin", fmt(R.cumul_median_mm,1)+" mm",
+      "scénario haut (p90) "+fmt(R.cumul_p90_mm,1)+" mm · 7 j écoulés "+fmt(R.cumul_passe_7j_mm,0)+" mm"],
+    ["Nappe", DATA.nappe.anomalie_sigma==null?"—":(DATA.nappe.anomalie_sigma>0?"+":"")+fmt(DATA.nappe.anomalie_sigma,2)+" σ",
+      DATA.nappe.anomalie_sigma==null?"pas de piézomètre exploitable":
+        (DATA.nappe.anomalie_sigma>0.5?"bassin ressuyé au-dessus de la normale":
+         DATA.nappe.anomalie_sigma<-0.5?"nappes basses, capacité d'absorption":"proche de la normale saisonnière")],
+    ["Risque le plus probable", worst.label, worst.detail],
+  ].map(([l,v,s])=>`<div class="kpi"><div class="lab">${l}</div><div class="val">${v}</div><div class="sub">${s}</div></div>`).join("");
+}
+function maxProb(){
+  const e=DATA.seuils.depassements, ks=Object.keys(e).sort((a,b)=>+b.slice(1)-+a.slice(1));
+  for(const k of ks){ if(e[k].proba_max>=0.10)
+    return {label:Math.round(e[k].proba_max*100)+" % de dépasser T="+k.slice(1)+" ans",
+            detail:fq(e[k].debit)+" m³/s"+(e[k].hauteur!=null?" · "+fmt(e[k].hauteur,2)+" m":""), k:+k.slice(1), p:e[k].proba_max}; }
+  return {label:"Aucun seuil menacé", detail:"probabilité < 10 % sur toutes les périodes de retour", k:0, p:0};
+}
+function statusBadge(){
+  const w=maxProb(), el=$("#status");
+  const cls = w.k>=10&&w.p>=.3 ? "b-alert" : w.k>=2&&w.p>=.2 ? "b-warn" : "b-ok";
+  el.className="badge "+cls;
+  el.lastElementChild.textContent = cls==="b-alert"?"Crue significative probable":cls==="b-warn"?"Débordement possible":"Situation ordinaire";
+}
+function thresholds(){
+  const e=DATA.seuils.depassements;
+  const rows=Object.entries(e).sort((a,b)=>+a[0].slice(1)-+b[0].slice(1)).map(([k,v])=>
+    `<tr><td>T = ${k.slice(1)} ans</td><td>${fmt(v.debit,0)}</td><td>${v.hauteur!=null?fmt(v.hauteur,2):"—"}</td>
+     <td style="width:120px"><div class="bar"><b style="width:${(v.proba_max*100).toFixed(0)}%"></b></div></td>
+     <td>${(v.proba_max*100).toFixed(0)} %</td></tr>`).join("");
+  $("#thresholds").innerHTML=`<thead><tr><th>Période de retour</th><th>Débit m³/s</th><th>Hauteur m</th><th></th><th>Probabilité</th></tr></thead><tbody>${rows}</tbody>`;
+  const rt=DATA.seuils.periodes_retour;
+  $("#thr-note").innerHTML=`Loi de Gumbel ajustée sur ${rt.n_annees} maxima annuels, corrigés du débit journalier vers la pointe instantanée (×${rt.facteur_pointe}). `+
+    `Probabilité = part des ${DATA.diagnostic.n_trajectoires} trajectoires qui franchissent le seuil au moins une fois sur l'échéance.`+
+    (DATA.seuils.crues_historiques.length?` Crues de référence : ${DATA.seuils.crues_historiques.map(c=>`${c.libelle} — ${fmt(c.h,2)} m / ${fmt(c.q,0)} m³/s`).join(" ; ")}.`:"");
+}
+function upstream(){
+  const p=DATA.diagnostic.propagation;
+  if(!p||!p.stations_amont.length){ $("#upstream").innerHTML="<tbody><tr><td>Aucune station amont exploitable</td></tr></tbody>";
+    $("#up-note").textContent="Sans station amont corrélée, la prévision repose entièrement sur le modèle pluie-débit."; return; }
+  const rows=p.stations_amont.map(s=>
+    `<tr><td>${s.libelle}</td><td>${s.temps_propagation_h} h</td><td>${fmt(s.correlation,2)}</td><td>${isFinite(s.distance_km)?fmt(s.distance_km,0):"—"}</td></tr>`).join("");
+  $("#upstream").innerHTML=`<thead><tr><th>Station</th><th>Propagation</th><th>Corrélation</th><th>Distance km</th></tr></thead><tbody>${rows}</tbody>`;
+  const sk=p.competence_R2, hs=Object.keys(sk).map(Number).sort((a,b)=>a-b);
+  const best=hs.filter(h=>sk[h]>0.05).pop();
+  $("#up-note").innerHTML=`Le temps de propagation est mesuré par corrélation croisée des variations, pas postulé. `+
+    (best?`La régression amont apporte un gain mesuré jusqu'à <b>+${best} h</b> (R² hors échantillon ${fmt(sk[best],2)} contre la persistance) ; au-delà, la prévision de pluie reprend la main.`
+        :`Sur la fenêtre disponible, elle n'améliore pas la persistance : son poids est nul.`);
+}
+function drawNappe(){
+  const n=DATA.nappe;
+  if(!n.time.length){ $("#nappe-note").textContent="Aucun piézomètre avec chronique exploitable dans le rayon du bassin."; return; }
+  const {c,w,h}=setup($("#nappe"),180), L=46,Rp=10,T=10,B=22;
+  const xs=n.time.map(s=>new Date(s+"Z")), ys=n.niveau_ngf;
+  const lo=Math.min(...ys),hi=Math.max(...ys);
+  const X=d=>L+(d-xs[0])/(xs[xs.length-1]-xs[0])*(w-L-Rp), Y=v=>h-B-(v-lo)/((hi-lo)||1)*(h-B-T);
+  c.strokeStyle=css("--line"); c.fillStyle=css("--muted"); c.font="10px system-ui"; c.textAlign="right";
+  niceTicks(lo,hi,4).forEach(v=>{const y=Y(v); if(y<T||y>h-B)return;
+    c.globalAlpha=.5;c.beginPath();c.moveTo(L,y+.5);c.lineTo(w-Rp,y+.5);c.stroke();c.globalAlpha=1;
+    c.fillText(fmt(v,1),L-6,y+3);});
+  c.beginPath(); ys.forEach((v,i)=>{const x=X(xs[i]),y=Y(v); i?c.lineTo(x,y):c.moveTo(x,y);});
+  c.strokeStyle=css("--nappe"); c.lineWidth=1.6; c.stroke();
+  c.lineTo(X(xs[xs.length-1]),h-B); c.lineTo(X(xs[0]),h-B); c.closePath();
+  c.fillStyle=css("--nappe"); c.globalAlpha=.12; c.fill(); c.globalAlpha=1;
+  c.fillStyle=css("--muted"); c.textAlign="center";
+  [0,Math.floor(xs.length/2),xs.length-1].forEach(i=>c.fillText(xs[i].toLocaleDateString("fr-FR",{month:"short",year:"2-digit"}),X(xs[i]),h-6));
+  $("#nappe-note").innerHTML=`Piézomètre <code>${n.code_bss}</code>, niveau en m NGF sur 2 ans. `+
+    (n.anomalie_sigma==null?"":`Anomalie du mois en cours : <b>${n.anomalie_sigma>0?"+":""}${fmt(n.anomalie_sigma,2)} σ</b>. `+
+    `Elle module le réservoir de production du modèle : une nappe haute signale un sol déjà ressuyé, donc un coefficient de ruissellement plus élevé pour la pluie à venir.`);
+}
+function drawBasin(){
+  const e=DATA.meta.emprise;
+  if(!e||!e.lon||!e.lon.length){ $("#basin-note").textContent="Emprise non calculée."; return; }
+  const {c,w,h}=setup($("#basin"),180), pad=14;
+  const lo=Math.min(...e.z), hi=Math.max(...e.z);
+  const x0=Math.min(...e.lon),x1=Math.max(...e.lon),y0=Math.min(...e.lat),y1=Math.max(...e.lat);
+  const kx=(w-2*pad)/((x1-x0)||1), ky=(h-2*pad)/((y1-y0)||1), k=Math.min(kx,ky);
+  const ox=(w-(x1-x0)*k)/2, oy=(h-(y1-y0)*k)/2;
+  const X=l=>ox+(l-x0)*k, Y=l=>h-oy-(l-y0)*k;
+  const r=Math.max(2.4, k*(e.lon.length>1?(x1-x0)/Math.sqrt(e.lon.length):0.02)*0.55);
+  e.lon.forEach((l,i)=>{
+    const f=(e.z[i]-lo)/((hi-lo)||1);
+    c.fillStyle=`hsl(${(1-f)*95+15} ${28+f*22}% ${f>0.5?62-f*22:34+f*30}%)`;
+    c.globalAlpha=.85; c.beginPath(); c.arc(X(l),Y(e.lat[i]),r,0,7); c.fill();
+  });
+  c.globalAlpha=1;
+  (DATA.meta.points_meteo||[]).forEach(([lon,lat])=>{
+    c.strokeStyle=css("--rain"); c.lineWidth=1.4; c.beginPath(); c.arc(X(lon),Y(lat),3.4,0,7); c.stroke(); });
+  c.fillStyle=css("--alert"); c.beginPath(); c.arc(X(DATA.meta.lon),Y(DATA.meta.lat),5,0,7); c.fill();
+  c.strokeStyle=css("--panel"); c.lineWidth=1.6; c.stroke();
+  const rl=DATA.meta.relief;
+  $("#basin-note").innerHTML=`${fmt(DATA.meta.surface_bv_km2,0)} km² · altitudes ${fmt(rl.z_outlet,0)}–${fmt(rl.z_max,0)} m (RGE ALTI) · dénivelé moyen ${fmt(rl.denivele_m,0)} m · `+
+    `temps de concentration <b>${fmt(DATA.meta.tc_hours,1)} h</b> (Giandotti). Points bleus = mailles d'échantillonnage de la pluie ; point rouge = station.`;
+}
+function diagnostic(){
+  const d=DATA.diagnostic, cal=d.calage, rc=d.courbe_tarage, em=d.modele_erreur;
+  const cards=[
+    ["Modèle pluie-débit", `KGE ${fmt(cal.validation_KGE,2)}`,
+     `validation indépendante ${cal.periode_validation[0]} → ${cal.periode_validation[1]}, jamais vue au calage. NSE ${fmt(cal.validation_NSE,2)}.`],
+    ["Correction temps réel", `${em.biais_actuel_pct>0?"+":""}${fmt(em.biais_actuel_pct,0)} %`,
+     `biais mesuré sur les dernières heures, prolongé avec une autocorrélation ρ=${fmt(em.rho_1h,2)} par heure. C'est ce terme qui recale le modèle sur la réalité du moment.`],
+    ["Courbe de tarage", rc?`R² ${fmt(rc.r2,3)}`:"—",
+     rc?`Q = ${fmt(rc.a,3)}·(H − ${fmt(rc.h0,2)})^${fmt(rc.b,2)}, ajustée sur ${rc.n} couples entre ${fmt(rc.plage_h[0],2)} et ${fmt(rc.plage_h[1],2)} m.`:"non ajustable"],
+  ];
+  $("#diag").innerHTML=cards.map(([l,v,s])=>`<div><div class="lab" style="font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted)">${l}</div><div style="font-size:20px;font-weight:650;margin:2px 0 4px">${v}</div><div class="note">${s}</div></div>`).join("");
+  const pj=d.parametres_journaliers, ph=d.parametres_horaires;
+  $("#diag-detail").innerHTML=[
+    ["Paramètres GR journaliers",`X1=${pj.X1} mm · X2=${pj.X2} mm/j · X3=${pj.X3} mm · X4=${pj.X4} j · correction de pluie ×${pj.CP}`],
+    ["Paramètres GR horaires",`X1=${ph.X1} mm · X2=${ph.X2} mm/h · X3=${ph.X3} mm · X4=${ph.X4} h`],
+    ["Objectif de calage",`${fmt(cal.objectif_calage,3)} (½ KGE + ½ KGE sur √Q), DDS sur ${cal.periode_calage[0]} → ${cal.periode_calage[1]}`],
+    ["Trajectoires",`${d.n_trajectoires} (membres de pluie multi-modèles × tirages d'erreur résiduelle)`],
+    ["Stations amont lues",`${d.stations_amont_utilisees.length} chroniques temps réel Hub'Eau`],
+    ["Écart-type des résidus",`σ(log Q) = ${fmt(em.sigma_log,2)} sur ${em.n_pas} pas horaires`],
+  ].map(([k,v])=>`<dt>${k}</dt><dd>${v}</dd>`).join("");
+}
+function validation(){
+  const v=DATA.validation;
+  if(!v||!v.pluie_parfaite) return;
+  $("#valid-panel").hidden=false;
+  const reel=v.pluie_prevue||[], parf=v.pluie_parfaite;
+  const byLead=l=>reel.find(r=>r.echeance_j===l);
+  const rows=parf.map(p=>{
+    const r=byLead(p.echeance_j);
+    const g=r?r.gain_sur_persistance_pct:null;
+    return `<tr><td>+${p.echeance_j} j</td>
+      <td><b>${r?fmt(r.KGE,2):"—"}</b></td>
+      <td>${fmt(p.KGE,2)}</td>
+      <td>${fmt(p.KGE_persistance,2)}</td>
+      <td style="color:${g>0?"var(--ok)":"var(--alert)"}">${g==null?"—":(g>0?"+":"")+fmt(g,0)+" %"}</td>
+      <td>${r&&r.POD!=null?fmt(r.POD*100,0)+" %":"—"}</td>
+      <td>${r&&r.FAR!=null?fmt(r.FAR*100,0)+" %":"—"}</td></tr>`;}).join("");
+  $("#validation").innerHTML=`<thead><tr><th>Échéance</th><th>KGE pluie prévue</th><th>KGE pluie parfaite</th>
+    <th>KGE persistance</th><th>Gain d'erreur sur persistance</th><th>Détection</th><th>Fausses alertes</th></tr></thead><tbody>${rows}</tbody>`;
+  const per=v.periode_pluie_prevue||v.periode;
+  $("#valid-note").innerHTML=
+    `Chaîne rejouée à ${v.n_previsions.toLocaleString("fr-FR")} dates d'origine sur <b>${per[0]} → ${per[1]}</b>, `+
+    `période exclue du calage. À chaque date, le modèle ne connaît que le passé, et la pluie « prévue » est celle qu'annonçaient réellement les runs Météo-France de l'époque. `+
+    `<b>KGE</b> : 1 = parfait, ${fmt((reel[0]||parf[0]).KGE_persistance,2)} = niveau de la persistance à +1 j. `+
+    `L'écart entre pluie prévue et pluie parfaite mesure la part d'erreur qui vient de la météo et non de l'hydrologie — c'est elle qui domine au-delà de 2 jours. `+
+    (v.seuil_Q2_journalier?`Détection et fausses alertes portent sur le franchissement du débit biennal (${fmt(v.seuil_Q2_journalier,0)} m³/s en moyenne journalière)`:"");
+  const nd=(reel[0]||parf[0]).n_depassements;
+  if(nd!=null) $("#valid-note").innerHTML+=` — <b>seulement ${nd} épisode${nd>1?"s":""}</b> sur la période, ces deux colonnes sont donc indicatives et non significatives.`;
+  else $("#valid-note").innerHTML+=".";
+  if(v.episodes&&v.episodes.length){
+    $("#episodes").innerHTML=`<h2 style="margin-top:18px">Épisodes de crue rejoués (+2 j, pluie réellement prévue)</h2><div class="scroll"><table>
+      <thead><tr><th>Début</th><th>Pic observé m³/s</th><th>Pic prévu m³/s</th><th>Écart</th></tr></thead><tbody>`+
+      v.episodes.map(e=>`<tr><td>${String(e.debut).slice(0,10)}</td><td>${fmt(e.pic_observe,0)}</td><td>${fmt(e.pic_prevu,0)}</td>
+        <td style="color:${Math.abs(e.erreur_pic_pct)<20?"var(--ok)":Math.abs(e.erreur_pic_pct)<40?"var(--warn)":"var(--alert)"}">${e.erreur_pic_pct>0?"+":""}${fmt(e.erreur_pic_pct,0)} %</td></tr>`).join("")+
+      `</tbody></table></div>`;
+  }
+}
+function header(){
+  const m=DATA.meta;
+  const riv=(m.cours_eau||"").replace(/^(la|le|l'|les)\s*/i,"").trim();
+  const stationHasRiver = riv && m.station.toLowerCase().includes(riv.toLowerCase());
+  $("#title").firstChild.textContent = stationHasRiver||!riv ? m.station : `${m.cours_eau} — ${m.station}`;
+  $("#subtitle").textContent=`Station ${m.code_station} · bassin de ${fmt(m.surface_bv_km2,0)} km² · prévision établie le ${fdate(new Date(m.date_prevision))}`;
+  document.title=`${m.station} — prévision de crue`;
+  $("#footer").innerHTML=`Sources : Hub'Eau (hydrométrie temps réel, débits journaliers, piézométrie) · Météo-France via Open-Meteo (AROME, ARPEGE, ensembles ICON-D2/ICON-EU/ECMWF) · IGN RGE ALTI · Vigicrues (crues de référence, composition du bassin). `+
+    `Généré le ${fdate(new Date(m.genere_le))} par FloodCast. <b>Outil expérimental : il ne remplace pas la vigilance officielle Vigicrues.</b>`;
+}
+function render(){ header(); kpis(); statusBadge(); thresholds(); upstream(); drawMain(); drawNappe(); drawBasin(); validation(); diagnostic(); }
+$("#tab-h").onclick=()=>{MODE="H";$("#tab-h").setAttribute("aria-selected","true");$("#tab-q").setAttribute("aria-selected","false");drawMain();kpis();};
+$("#tab-q").onclick=()=>{MODE="Q";$("#tab-q").setAttribute("aria-selected","true");$("#tab-h").setAttribute("aria-selected","false");drawMain();kpis();};
+if(!hasH){ $("#tab-h").disabled=true; MODE="Q"; $("#tab-q").setAttribute("aria-selected","true"); $("#tab-h").setAttribute("aria-selected","false"); }
+addEventListener("resize",()=>{drawMain();drawNappe();drawBasin();});
+matchMedia("(prefers-color-scheme:dark)").addEventListener("change",render);
+render();
+</script>

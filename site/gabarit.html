@@ -1,0 +1,562 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>Repères de crue à Rochereau</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@400;500;600&family=Barlow:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+:root{
+  --papier:#f4f2ec; --carte:#eae6dc; --encre:#1b1f23; --sourdine:#6f7a80;
+  --trait:#d6d1c5; --eau:#2f6f92; --eau-clair:#7fa9c2; --courbe:#a89c86; --bati:#4a4038; --route:#b3a898; --repere:#b8442a; --repere-doux:rgba(184,68,42,.14); --repere2:#8a6410;
+  --inonde:rgba(47,111,146,.40);
+  --mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
+  --titre:"Barlow Condensed","Barlow",system-ui,sans-serif;
+  --texte:"Barlow",system-ui,-apple-system,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --papier:#12161a; --carte:#1a1f25; --encre:#e7ebee; --sourdine:#8e9aa2;
+  --trait:#2b3138; --eau:#5b9cc0; --eau-clair:#2f566b; --courbe:#5d5648; --bati:#c2b6a6; --route:#4d5259;
+  --repere:#e0674a; --repere-doux:rgba(224,103,74,.18); --repere2:#d5a54a; --inonde:rgba(91,156,192,.34);
+}}
+:root[data-theme="dark"]{
+  --papier:#12161a; --carte:#1a1f25; --encre:#e7ebee; --sourdine:#8e9aa2;
+  --trait:#2b3138; --eau:#5b9cc0; --eau-clair:#2f566b; --courbe:#5d5648;
+  --bati:#c2b6a6; --route:#4d5259; --repere:#e0674a; --repere-doux:rgba(224,103,74,.18);
+  --repere2:#d5a54a; --inonde:rgba(91,156,192,.34);
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--papier);color:var(--encre);font-family:var(--texte);font-size:15px;line-height:1.55}
+.feuille{max-width:1220px;margin:0 auto;padding:26px 20px 56px}
+header{display:flex;flex-wrap:wrap;align-items:flex-end;justify-content:space-between;gap:18px;
+  border-bottom:2px solid var(--encre);padding-bottom:12px;margin-bottom:20px}
+h1{font-family:var(--titre);font-size:34px;font-weight:600;letter-spacing:.01em;margin:0;line-height:1.05;text-wrap:balance}
+.lieu{font-family:var(--titre);font-size:15px;letter-spacing:.14em;text-transform:uppercase;color:var(--sourdine);margin-top:4px}
+.refs{display:flex;gap:22px;flex-wrap:wrap}
+.ref{min-width:104px}
+.ref dt{font-family:var(--titre);font-size:11.5px;letter-spacing:.11em;text-transform:uppercase;color:var(--sourdine)}
+.ref dd{margin:1px 0 0;font-family:var(--mono);font-size:17px;font-variant-numeric:tabular-nums}
+.ref dd small{font-size:11px;color:var(--sourdine)}
+.corps{display:grid;gap:20px;grid-template-columns:1fr}
+@media(min-width:940px){.corps{grid-template-columns:minmax(0,1fr) 286px}}
+.corps>*{min-width:0}
+.cadre{position:relative;background:var(--carte);border:1px solid var(--trait)}
+canvas{display:block;width:100%;height:auto;cursor:crosshair;touch-action:none}
+.legende{display:flex;flex-wrap:wrap;gap:14px;font-size:12.5px;color:var(--sourdine);
+  padding:9px 12px;border-top:1px solid var(--trait);align-items:center}
+.legende span{display:inline-flex;align-items:center;gap:6px}
+.puce{width:13px;height:3px;display:block}
+.panneau{display:flex;flex-direction:column;gap:16px}
+.bloc{border:1px solid var(--trait);background:var(--carte);padding:13px 14px}
+h2{font-family:var(--titre);font-size:12.5px;letter-spacing:.12em;text-transform:uppercase;
+  color:var(--sourdine);margin:0 0 9px;font-weight:600}
+.scenarios{display:flex;flex-direction:column;border:1px solid var(--trait);margin-bottom:11px}
+.scenarios button{display:grid;grid-template-columns:1fr auto;gap:3px 8px;align-items:baseline;
+  border:0;border-bottom:1px solid var(--trait);background:transparent;color:var(--encre);
+  font:inherit;text-align:left;padding:6px 9px;cursor:pointer}
+.scenarios button:last-child{border-bottom:0}
+.scenarios button:hover{background:var(--repere-doux)}
+.scenarios button[aria-pressed="true"]{background:var(--encre);color:var(--papier)}
+.scenarios button[aria-pressed="true"] em{color:var(--papier);opacity:.72}
+.scenarios button:focus-visible{outline:2px solid var(--repere);outline-offset:-2px}
+.scenarios .nom{font-family:var(--titre);font-size:14.5px;letter-spacing:.03em}
+.scenarios .val{font-family:var(--mono);font-size:13px;font-variant-numeric:tabular-nums}
+.scenarios em{grid-column:1/3;font-style:normal;font-size:11.5px;color:var(--sourdine)}
+.scenarios .ancre{border-left:3px solid var(--repere)}
+.calage{display:grid;grid-template-columns:1fr auto;gap:3px 10px;margin:0;font-size:13px}
+.calage dt{color:var(--sourdine)}
+.calage dd{margin:0;font-family:var(--mono);font-variant-numeric:tabular-nums}
+.fml{font-family:var(--mono);font-size:.94em;white-space:nowrap}
+.lien{background:none;border:0;padding:0;font:inherit;color:var(--repere);text-decoration:underline;
+  cursor:pointer;text-underline-offset:2px}
+.lien:focus-visible{outline:2px solid var(--repere);outline-offset:2px}
+.liste{display:flex;flex-direction:column;gap:7px}
+.repere.autre{background:transparent;border-left-color:var(--repere2)}
+.repere.autre .num{color:var(--repere2)}
+.repere{display:grid;grid-template-columns:22px 1fr auto;gap:9px;align-items:baseline;
+  padding:7px 9px;background:var(--repere-doux);border-left:2px solid var(--repere)}
+.repere b{font-family:var(--mono);font-size:15px;font-variant-numeric:tabular-nums}
+.repere .num{font-family:var(--mono);font-size:12px;color:var(--repere);font-weight:500}
+.repere .coord{font-family:var(--mono);font-size:11px;color:var(--sourdine);grid-column:2/4}
+.repere button{border:0;background:transparent;color:var(--sourdine);cursor:pointer;font-size:16px;line-height:1;padding:0 2px}
+.repere button:hover{color:var(--repere)}
+.vide{color:var(--sourdine);font-size:13.5px;line-height:1.5}
+.mesure{font-family:var(--mono);font-size:26px;font-variant-numeric:tabular-nums;margin:2px 0 0}
+.mesure small{font-size:13px;color:var(--sourdine);font-family:var(--texte)}
+.note{font-size:12.5px;color:var(--sourdine);line-height:1.5;margin:8px 0 0}
+.commandes{position:absolute;top:8px;right:8px;display:flex;flex-direction:column;gap:5px;align-items:stretch}
+.commandes button{font-family:var(--titre);font-size:13px;letter-spacing:.06em;text-transform:uppercase;
+  background:var(--carte);color:var(--encre);border:1px solid var(--trait);cursor:pointer;
+  padding:5px 9px;line-height:1.2;min-width:34px}
+.commandes button:hover{border-color:var(--repere);color:var(--repere)}
+.commandes button:focus-visible{outline:2px solid var(--repere);outline-offset:1px}
+.commandes button:not(.large){font-family:var(--mono);font-size:16px;padding:2px 0}
+.echelle{position:absolute;left:8px;bottom:8px;display:flex;align-items:center;gap:7px;
+  font-family:var(--mono);font-size:11.5px;color:var(--encre);background:var(--carte);
+  border:1px solid var(--trait);padding:3px 8px;pointer-events:none}
+.echelle i{display:block;height:5px;border:1px solid var(--encre);border-top:0}
+.curseur{font-family:var(--mono);font-size:12px;color:var(--sourdine);
+  position:absolute;right:8px;bottom:8px;background:var(--carte);padding:3px 7px;border:1px solid var(--trait);
+  font-variant-numeric:tabular-nums;pointer-events:none}
+.situation{display:grid;gap:14px;grid-template-columns:1fr;border:1px solid var(--trait);
+  background:var(--carte);padding:15px 17px;margin-bottom:20px}
+@media(min-width:760px){.situation{grid-template-columns:auto 1fr}}
+.situation .etat{font-family:var(--titre);font-size:26px;letter-spacing:.01em;line-height:1.1}
+.situation .quand{font-size:12.5px;color:var(--sourdine);margin-top:3px}
+.seuilsjauge{display:flex;flex-direction:column;gap:8px;min-width:0}
+.jauge{display:grid;grid-template-columns:auto 1fr auto;gap:10px;align-items:center;font-size:13.5px}
+.jauge .lbl{font-family:var(--titre);letter-spacing:.04em;white-space:nowrap}
+.jauge .barre{height:9px;background:var(--trait);position:relative;overflow:hidden}
+.jauge .barre b{position:absolute;inset:0 auto 0 0;background:var(--eau)}
+.jauge .barre.sec b{background:var(--sourdine);opacity:.45}
+.jauge .marge{font-family:var(--mono);font-variant-numeric:tabular-nums;white-space:nowrap;
+  font-size:13px;min-width:74px;text-align:right}
+.jauge .marge.dedans{color:var(--repere);font-weight:600}
+.consigne{background:var(--repere-doux);border-left:2px solid var(--repere);padding:11px 13px;font-size:14px;margin-bottom:20px}
+.consigne b{font-weight:600}
+footer{margin-top:30px;padding-top:14px;border-top:1px solid var(--trait);font-size:12px;color:var(--sourdine)}
+code{font-family:var(--mono);font-size:.92em}
+@media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+</style>
+
+</head>
+<body>
+<div class="feuille">
+<header>
+  <div>
+    <h1>Repères de crue à Rochereau</h1>
+    <div class="lieu">Sèvre Nantaise · Mortagne-sur-Sèvre</div>
+  </div>
+  <dl class="refs">
+    <div class="ref"><dt>Zéro de l'échelle</dt><dd>109,26 <small>m NGF</small></dd></div>
+    <div class="ref"><dt>Crue janv. 2025</dt><dd>2,64 <small>m à St-Laurent</small></dd></div>
+    <div class="ref"><dt>Plan d'eau amont</dt><dd>111,90 <small>m NGF</small></dd></div>
+  </dl>
+</header>
+
+<p class="consigne">Quatre observations calent ce bief : vos deux repères de crue, la ligne d'eau
+du <b>vol LiDAR du 24 mars 2022</b>, les <b>10 cm d'eau actuels</b> qui fixent le fond à 56,05 m, et
+votre souvenir d'<b>avril 1983 à +1 m sur 2025</b>. Ce dernier a révélé que la relation
+hauteur-débit de Saint-Laurent surestimait de 16 % les débits extrêmes : elle est corrigée
+au-delà de son domaine calibré.</p>
+
+<div id="situation" class="situation"></div>
+
+<div class="corps">
+  <div>
+    <div class="cadre">
+      <canvas id="carte" width="1100" height="760"></canvas>
+      <div class="curseur" id="curseur">—</div>
+      <div class="commandes">
+        <button id="z-plus" title="Zoomer" aria-label="Zoomer">+</button>
+        <button id="z-moins" title="Dézoomer" aria-label="Dézoomer">−</button>
+        <button id="z-lieu" class="large">Rochereau</button>
+        <button id="z-tout" class="large">Vue d'ensemble</button>
+      </div>
+      <div class="echelle" id="echelle"><i></i><span>—</span></div>
+    </div>
+    <div class="legende">
+      <span><i class="puce" style="background:var(--eau)"></i>Sèvre Nantaise</span>
+      <span><i class="puce" style="background:var(--courbe)"></i>courbes de niveau (2 m)</span>
+      <span><i class="puce" style="background:var(--bati);height:9px;width:9px"></i>bâti</span>
+      <span><i class="puce" style="background:var(--route);height:5px"></i>voirie</span>
+      <span><i class="puce" style="background:var(--repere);height:9px;width:9px;border-radius:50%"></i>repère janvier 2025</span>
+      <span><i class="puce" style="background:var(--repere2);height:9px;width:9px;border-radius:50%"></i>repère octobre 2024</span>
+      <span><i class="puce" style="background:var(--inonde);height:9px;width:9px"></i>emprise de la crue choisie</span>
+      <span><i class="puce" style="background:var(--repere);height:2px"></i>cote de la porte (59,35 m)</span>
+      <span><i class="puce" style="background:var(--repere);height:2px;opacity:.6"></i>cote de l'atelier (59,55 m)</span>
+    </div>
+  </div>
+
+  <aside class="panneau">
+    <div class="bloc">
+      <h2>Crue représentée</h2>
+      <div class="scenarios" id="scenarios"></div>
+      <p class="mesure" id="niveau">—<small> m NGF</small></p>
+      <p class="note" id="niveau-note"></p>
+    </div>
+
+    <div class="bloc">
+      <h2>Repères posés</h2>
+      <div class="liste" id="liste"></div>
+    </div>
+
+    <div class="bloc">
+      <h2>Seuils de la propriété</h2>
+      <dl class="calage">
+        <dt>Porte de la maison</dt><dd>59,35 m · T = 4,2 ans</dd>
+        <dt>Atelier</dt><dd>59,55 m · T = 6,0 ans</dd>
+      </dl>
+      <p class="note">Période de retour déduite de 20 maxima annuels à Saint-Laurent,
+        transposés ici. <b>Octobre 2024 est passé 11 cm au-dessus de la porte</b>,
+        janvier 2025 soixante centimètres au-dessus.</p>
+    </div>
+
+    <div class="bloc">
+      <h2>Calage du bief</h2>
+      <dl class="calage">
+        <dt>Chute depuis Saint-Laurent</dt><dd>51,95 m</dd>
+        <dt>Ligne d'eau au vol</dt><dd>56,54 m NGF</dd>
+        <dt>Fond du lit</dt><dd>56,06 m NGF</dd>
+        <dt>Tirant d'eau janvier 2025</dt><dd>3,86 m</dd>
+        <dt>Débit amont correspondant</dt><dd>182 m³/s</dd>
+        <dt>Exposant de la section</dt><dd>0,47</dd>
+        <dt>Vol LiDAR</dt><dd>24 mars 2022</dd>
+        <dt>Débit ce jour-là</dt><dd>2,15 m³/s</dd>
+      </dl>
+      <p class="note">Étiage lu sur le MNT LiDAR : le laser ne traverse pas l'eau, le point bas
+        du lit est donc la surface au moment du vol. Les niveaux suivent
+        <span class="fml">z = 56,05 + a·Q<sup>0,47</sup></span>, ajusté sur quatre observations
+        couvrant 2 à 290 m³/s — soit toute la plage utile. Plus aucun paramètre n'est supposé :
+        exposant, cote du fond et débits extrêmes sortent tous de mesures.</p>
+    </div>
+  </aside>
+</div>
+
+<footer>
+  Relief : IGN, MNT LiDAR HD (50 cm, échantillonné au pas de 10 m). Bâti, voirie et hydrographie : IGN BD TOPO.
+  Référence altimétrique de la station : Hub&nbsp;Eau. Altitudes en mètres NGF&nbsp;IGN&nbsp;69.
+  Le zéro de l'échelle (109,26 m) a été recoupé avec la surface d'eau vue par le LiDAR : <b>18 cm d'écart</b>.
+</footer>
+</div>
+
+<script>
+const D = __DATA__;
+D.calage = __CALAGE__;
+const $ = s => document.querySelector(s);
+const fmt = (v,d=2) => v==null||!isFinite(v) ? "—" : v.toLocaleString("fr-FR",{minimumFractionDigits:d,maximumFractionDigits:d});
+const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+
+const M = D.mnt, LON = M.lons, LAT = M.lats, Z = M.z;
+const lon0=LON[0], lon1=LON[LON.length-1], lat0=LAT[0], lat1=LAT[LAT.length-1];
+let zmin=Infinity, zmax=-Infinity;
+for(const r of Z) for(const v of r){ if(v==null) continue; if(v<zmin)zmin=v; if(v>zmax)zmax=v; }
+
+const cv=$("#carte"), ctx=cv.getContext("2d");
+let W=cv.width, H=cv.height;
+const ETENDUE_LON=lon1-lon0, ETENDUE_LAT=lat1-lat0;
+const ZOOM_MAX=14;
+// La vue est definie par son centre et un facteur d'agrandissement, bornee a
+// l'emprise des donnees : on ne peut pas sortir de la zone levee au LiDAR.
+let vue={cx:(lon0+lon1)/2, cy:(lat0+lat1)/2, k:1}, B=null;
+function cadrer(){
+  vue.k=Math.max(1,Math.min(ZOOM_MAX,vue.k));
+  const sl=ETENDUE_LON/vue.k, sa=ETENDUE_LAT/vue.k;
+  vue.cx=Math.max(lon0+sl/2, Math.min(lon1-sl/2, vue.cx));
+  vue.cy=Math.max(lat0+sa/2, Math.min(lat1-sa/2, vue.cy));
+  B={l0:vue.cx-sl/2, l1:vue.cx+sl/2, a0:vue.cy-sa/2, a1:vue.cy+sa/2};
+}
+cadrer();
+const X = lon => (lon-B.l0)/(B.l1-B.l0)*W;
+const Y = lat => H-(lat-B.a0)/(B.a1-B.a0)*H;
+const lonAt = x => B.l0 + x/W*(B.l1-B.l0);
+const latAt = y => B.a0 + (H-y)/H*(B.a1-B.a0);
+const metresParPixel = () => (B.l1-B.l0)*111320*Math.cos(vue.cy*Math.PI/180)/W;
+
+/* Altitude en un point quelconque, par interpolation bilineaire de la grille LiDAR. */
+function alt(lon,lat){
+  const fx=(lon-lon0)/(lon1-lon0)*(LON.length-1), fy=(lat-lat0)/(lat1-lat0)*(LAT.length-1);
+  const i=Math.floor(fx), j=Math.floor(fy);
+  if(i<0||j<0||i>=LON.length-1||j>=LAT.length-1) return null;
+  const a=Z[j][i], b=Z[j][i+1], c=Z[j+1][i], d=Z[j+1][i+1];
+  if([a,b,c,d].some(v=>v==null)) return a??b??c??d??null;
+  const u=fx-i, v=fy-j;
+  return a*(1-u)*(1-v)+b*u*(1-v)+c*(1-u)*v+d*u*v;
+}
+
+let reperes=[], db=null, iScenario=0, devoiler=false;
+const SC = D.calage.scenarios;
+const SEUILS = D.calage.seuils_propriete || [];
+const PREV = D.calage.prevision || null;
+/* Un niveau NGF ne dit rien a personne ; ce qui parle, c'est la hauteur d'eau
+   au-dessus de la porte. On affiche donc la marge, et la cote en second. */
+const margeTxt = (z,seuil) => (z-seuil>=0?"+":"−")+Math.abs(Math.round((z-seuil)*100))+" cm";
+const niveau = () => SC[iScenario] ? SC[iScenario].z : null;
+
+/* --- rendu ------------------------------------------------------------- */
+function teinte(z,frac){
+  // Rampe hypsometrique : fond de vallee vert sourd, hauteurs en beige clair.
+  const t=Math.max(0,Math.min(1,frac));
+  const h=88-t*46, s=16+t*12, l=(document.documentElement.dataset.theme==="dark"||
+      (matchMedia("(prefers-color-scheme:dark)").matches && document.documentElement.dataset.theme!=="light"))
+      ? 15+t*13 : 76-t*11;
+  return `hsl(${h} ${s}% ${l}%)`;
+}
+function fenetreIndices(){
+  const nx=LON.length, ny=LAT.length;
+  const di=(lon1-lon0)/(nx-1), dj=(lat1-lat0)/(ny-1);
+  return {nx,ny,
+    i0:Math.max(0,Math.floor((B.l0-lon0)/di)-1), i1:Math.min(nx-1,Math.ceil((B.l1-lon0)/di)+1),
+    j0:Math.max(0,Math.floor((B.a0-lat0)/dj)-1), j1:Math.min(ny-1,Math.ceil((B.a1-lat0)/dj)+1)};
+}
+function dessiner(){
+  cadrer();
+  ctx.clearRect(0,0,W,H);
+  const F=fenetreIndices();
+  // Un pas superieur a 1 quand la vue est large : inutile de peindre plus de
+  // mailles qu'il n'y a de pixels, et cela garde le deplacement fluide.
+  const pas=Math.max(1,Math.round((F.i1-F.i0)/W*1.4));
+  const cw=W/((B.l1-B.l0)/((lon1-lon0)/(F.nx-1)))*pas;
+  const ch=H/((B.a1-B.a0)/((lat1-lat0)/(F.ny-1)))*pas;
+  const sc=SC[iScenario];
+  const posee = reperes.find(r=>r.evenement===sc.evenement);
+  const aveugle = sc.confirmer && !posee && !devoiler;
+  const nv = aveugle ? null : (posee && sc.confirmer ? posee.z : niveau());
+
+  // relief
+  for(let j=F.j0;j<F.j1;j+=pas) for(let i=F.i0;i<F.i1;i+=pas){
+    const v=Z[j][i]; if(v==null) continue;
+    ctx.fillStyle=teinte(v,(v-zmin)/(zmax-zmin));
+    ctx.fillRect(X(LON[i])-.5, Y(LAT[j])-ch+.5, cw+1.2, ch+1.2);
+  }
+  // emprise inondee
+  if(nv!=null){
+    ctx.fillStyle=css("--inonde");
+    for(let j=F.j0;j<F.j1;j+=pas) for(let i=F.i0;i<F.i1;i+=pas){
+      const v=Z[j][i]; if(v==null||v>nv) continue;
+      ctx.fillRect(X(LON[i])-.5, Y(LAT[j])-ch+.5, cw+1.2, ch+1.2);
+    }
+  }
+  // Equidistance des courbes selon l'echelle : 2 m en vue large, 50 cm de pres,
+  // ou la precision du LiDAR permet de lire le micro-relief du lit majeur.
+  const equi = vue.k>=6 ? 0.5 : vue.k>=3 ? 1 : 2;
+  ctx.strokeStyle=css("--courbe"); ctx.lineWidth=.7; ctx.globalAlpha=.62;
+  for(let niv=Math.ceil(zmin/equi)*equi; niv<=zmax; niv+=equi){
+    const majeure = Math.abs(niv/(equi*5)-Math.round(niv/(equi*5)))<1e-6;
+    ctx.lineWidth = majeure?1.3:.7; ctx.globalAlpha = majeure?.8:.5;
+    ctx.beginPath();
+    for(let j=F.j0;j<F.j1;j++) for(let i=F.i0;i<F.i1;i++){
+      const a=Z[j][i],b=Z[j][i+1],c=Z[j+1][i+1],d=Z[j+1][i];
+      if([a,b,c,d].some(v=>v==null)) continue;
+      const pts=[];
+      const bord=(z1,z2,x1,y1,x2,y2)=>{ if((z1<niv)!==(z2<niv)){ const t=(niv-z1)/(z2-z1);
+        pts.push([x1+(x2-x1)*t, y1+(y2-y1)*t]); } };
+      const xi=X(LON[i]), xi1=X(LON[i+1]), yj=Y(LAT[j]), yj1=Y(LAT[j+1]);
+      bord(a,b,xi,yj,xi1,yj); bord(b,c,xi1,yj,xi1,yj1);
+      bord(c,d,xi1,yj1,xi,yj1); bord(d,a,xi,yj1,xi,yj);
+      if(pts.length>=2){ ctx.moveTo(pts[0][0],pts[0][1]); ctx.lineTo(pts[1][0],pts[1][1]); }
+    }
+    ctx.stroke();
+  }
+  ctx.globalAlpha=1;
+
+  const trace=(chemins,couleur,epaisseur,remplir)=>{
+    ctx.strokeStyle=couleur; ctx.fillStyle=couleur; ctx.lineWidth=epaisseur;
+    ctx.lineJoin="round"; ctx.lineCap="round";
+    for(const ch of chemins){
+      ctx.beginPath();
+      ch.forEach((p,k)=>{ const x=X(p[0]), y=Y(p[1]); k?ctx.lineTo(x,y):ctx.moveTo(x,y); });
+      if(remplir){ ctx.closePath(); ctx.fill(); } else ctx.stroke();
+    }
+  };
+  trace(D.surfaces_eau, css("--eau-clair"), 1, true);
+  trace(D.hydro,  css("--eau"),  2.1);
+  trace(D.routes, css("--route"),2.4);
+  trace(D.batiments, css("--bati"), 1, true);
+
+  // toponymes
+  ctx.fillStyle=css("--encre"); ctx.textAlign="center";
+  ctx.font=`600 15px ${css("--titre")}`;
+  for(const t of D.toponymes){
+    const x=X(t.lon), y=Y(t.lat);
+    if(x<20||x>W-20||y<20||y>H-20) continue;
+    ctx.lineWidth=3.4; ctx.strokeStyle=css("--carte");
+    ctx.strokeText(t.nom.toUpperCase(),x,y); ctx.fillText(t.nom.toUpperCase(),x,y);
+  }
+  // cotes de la propriete : deux courbes de niveau distinctes
+  SEUILS.forEach((sl,k)=>{
+    ctx.strokeStyle=css("--repere"); ctx.globalAlpha=.85;
+    ctx.lineWidth=k?1.1:1.8; ctx.setLineDash(k?[3,3]:[]);
+    ctx.beginPath();
+    for(let j=F.j0;j<F.j1;j++) for(let i=F.i0;i<F.i1;i++){
+      const a=Z[j][i],b2=Z[j][i+1],c2=Z[j+1][i+1],d2=Z[j+1][i];
+      if([a,b2,c2,d2].some(v=>v==null)) continue;
+      const pts=[]; const niv=sl.cote;
+      const bord=(z1,z2,x1,y1,x2,y2)=>{ if((z1<niv)!==(z2<niv)){ const t=(niv-z1)/(z2-z1);
+        pts.push([x1+(x2-x1)*t,y1+(y2-y1)*t]); } };
+      const xi=X(LON[i]),xi1=X(LON[i+1]),yj=Y(LAT[j]),yj1=Y(LAT[j+1]);
+      bord(a,b2,xi,yj,xi1,yj); bord(b2,c2,xi1,yj,xi1,yj1);
+      bord(c2,d2,xi1,yj1,xi,yj1); bord(d2,a,xi,yj1,xi,yj);
+      if(pts.length>=2){ ctx.moveTo(pts[0][0],pts[0][1]); ctx.lineTo(pts[1][0],pts[1][1]); }
+    }
+    ctx.stroke(); ctx.setLineDash([]); ctx.globalAlpha=1;
+  });
+
+  // echelle graphique : longueur ronde la plus proche de 130 px
+  const mpp=metresParPixel();
+  let lg=[5,10,20,25,50,100,200,250,500].reduce((a,b)=>
+      Math.abs(b/mpp-130)<Math.abs(a/mpp-130)?b:a);
+  const el=$("#echelle");
+  el.querySelector("i").style.width=(lg/mpp).toFixed(0)+"px";
+  el.querySelector("span").textContent=lg+" m";
+
+  // reperes
+  reperes.forEach((r,k)=>{
+    const x=X(r.lon), y=Y(r.lat);
+    ctx.beginPath(); ctx.arc(x,y,7,0,7);
+    ctx.fillStyle=css(r.evenement==="janvier 2025"?"--repere":"--repere2"); ctx.fill();
+    ctx.lineWidth=2; ctx.strokeStyle=css("--carte"); ctx.stroke();
+    ctx.fillStyle=css("--carte"); ctx.textAlign="center";
+    ctx.font=`500 11px ${css("--mono")}`; ctx.fillText(String(k+1),x,y+4);
+  });
+}
+
+/* --- panneau ----------------------------------------------------------- */
+function rendreSituation(){
+  const el=$("#situation");
+  if(!PREV || !PREV.z_rochereau){ el.hidden=true; return; }
+  const z=PREV.z_rochereau["50"], zh=PREV.z_rochereau["90"];
+  const pic=Math.max(...z), pic90=Math.max(...zh);
+  const t=PREV.time.map(x=>new Date(x+"Z"));
+  const quand=t[z.indexOf(pic)];
+  const touche=SEUILS.filter(s=>pic90>=s.cote);
+  const etat = touche.length===0 ? "Aucun seuil atteint"
+    : `Eau attendue jusqu'à ${touche.map(s=>s.nom.toLowerCase()).join(" et ")}`;
+  el.innerHTML=`
+    <div>
+      <div class="etat" style="color:${touche.length?"var(--repere)":"inherit"}">${etat}</div>
+      <div class="quand">Prévision du ${fdate(new Date(PREV.date_prevision.replace(" ","T")+"Z"))} ·
+        pic médian ${fmt(pic)} m NGF le ${quand?fdate(quand):"—"} · scénario haut ${fmt(pic90)} m</div>
+    </div>
+    <div class="seuilsjauge">${SEUILS.map(s=>{
+      const m=pic-s.cote, sec=m<0;
+      const rempli=Math.max(0,Math.min(1,(pic-(s.cote-1.2))/1.2))*100;
+      return `<div class="jauge">
+        <span class="lbl">${s.nom}</span>
+        <span class="barre${sec?" sec":""}"><b style="width:${rempli.toFixed(0)}%"></b></span>
+        <span class="marge${sec?"":" dedans"}">${margeTxt(pic,s.cote)}</span>
+      </div>`;}).join("")}</div>`;
+  el.hidden=false;
+}
+function rendreScenarios(){
+  $("#scenarios").innerHTML = SC.map((s,k)=>`
+    <button data-k="${k}" aria-pressed="${k===iScenario}" class="${s.ancre?"ancre":""}">
+      <span class="nom">${s.nom}</span><span class="val">${margeTxt(s.z,SEUILS[0].cote)}</span>
+      <em>${fmt(s.z)} m NGF · ${s.ref} · atelier ${margeTxt(s.z,SEUILS[1].cote)}</em>
+    </button>`).join("");
+  $("#scenarios").querySelectorAll("button").forEach(b=>
+    b.onclick=()=>{ iScenario=+b.dataset.k; majTout(); });
+}
+function rendrePanneau(){
+  const s=SC[iScenario], nv=s.z, ecart=nv-D.calage.z_repere;
+  $("#niveau").innerHTML = `${fmt(nv)}<small> m NGF</small>`;
+  const incertitude = Math.abs(s.zh-s.zb)/2;
+  if(s.confirmer){
+    const pose=reperes.find(r=>r.evenement===s.evenement);
+    if(pose){
+      const e=pose.z-s.z;
+      $("#niveau").innerHTML=`${fmt(pose.z)}<small> m NGF</small>`;
+      $("#niveau-note").innerHTML=`Votre repère, contre <b>${fmt(s.z)} m</b> prédits : `
+        +`<b>${e>=0?"+":"−"}${fmt(Math.abs(e))} m</b>. C'est cet écart qui mesure la section.`;
+    } else if(devoiler){
+      $("#niveau-note").innerHTML=`Emprise <b>prédite</b>, affichée à votre demande. `
+        +`Un repère posé en la voyant ne mesure plus rien : il retomberait sur ce tracé par construction.`;
+    } else {
+      $("#niveau").innerHTML=`—<small> m NGF</small>`;
+      $("#niveau-note").innerHTML=`<b>Prédiction masquée volontairement.</b> Repérez-vous au terrain `
+        +`et aux courbes de niveau, puis cliquez où l'eau s'est arrêtée. Voir le tracé avant de `
+        +`cliquer reviendrait à me faire confirmer ma propre hypothèse.`
+        +` <button id="devoiler" class="lien">Afficher quand même</button>`;
+    }
+  } else $("#niveau-note").innerHTML = s.ancre
+    ? "Niveau mesuré sur votre repère : l'emprise affichée est celle que vous avez constatée."
+    : `<b>${ecart>=0?"+":"−"}${fmt(Math.abs(ecart))} m</b> par rapport à janvier 2025.`
+      + (incertitude>0.05
+          ? ` Extrapolé au-delà du repère : selon la forme de la section locale, entre ${fmt(Math.min(s.zb,s.zh))} et ${fmt(Math.max(s.zb,s.zh))} m — soit ±${fmt(incertitude)} m.`
+          : " Proche du repère : l'extrapolation reste centimétrique.");
+  const bd=$("#devoiler"); if(bd) bd.onclick=()=>{ devoiler=true; majTout(); };
+  const l=$("#liste");
+  if(!reperes.length){ l.innerHTML='<p class="vide">Cliquez sur la carte pour poser un premier repère.</p>'; return; }
+  l.innerHTML = reperes.map((r,k)=>{
+    const autre = r.evenement!=="janvier 2025";
+    const ecart = r.z_predit!=null ? r.z-r.z_predit : null;
+    return `
+    <div class="repere${autre?" autre":""}">
+      <span class="num">${k+1}</span>
+      <b>${fmt(r.z)} m</b>
+      <span></span>
+      <span class="coord">${r.evenement}${ecart!=null?` · ${ecart>=0?"+":"−"}${fmt(Math.abs(ecart))} m vs prédit`:""}</span>
+    </div>`;}).join("");
+  l.querySelectorAll("button").forEach(b=>b.onclick=()=>retirer(+b.dataset.k));
+}
+function majTout(){ dessiner(); rendreSituation(); rendreScenarios(); rendrePanneau(); }
+
+/* --- persistance ------------------------------------------------------- */
+function connecter(){ reperes = D.reperes || []; majTout(); }
+async function poser(lon,lat){
+  return;
+  const z=alt(lon,lat);
+  if(z==null) return;
+  const sc=SC[iScenario];
+  const r={lon:+lon.toFixed(6), lat:+lat.toFixed(6), z:+z.toFixed(2),
+           pose_le:new Date().toISOString(),
+           evenement: sc.evenement || sc.nom.toLowerCase(),
+           z_predit: sc.z};
+  if(db){ try{ await db.collection("reperes").add(r); return; }catch(e){} }
+  reperes.push(r); majTout();
+}
+async function retirer(k){
+  const r=reperes[k]; if(!r) return;
+  if(db && r.id){ try{ await db.doc(`reperes/${r.id}`).delete(); return; }catch(e){} }
+  reperes.splice(k,1); majTout();
+}
+
+/* --- interactions ------------------------------------------------------ */
+function pos(e){
+  const b=cv.getBoundingClientRect();
+  return [(e.clientX-b.left)/b.width*W, (e.clientY-b.top)/b.height*H];
+}
+let glisse=null, aGlisse=false;
+cv.addEventListener("pointerdown", e=>{
+  cv.setPointerCapture(e.pointerId);
+  const [x,y]=pos(e); glisse={x,y,cx:vue.cx,cy:vue.cy}; aGlisse=false;
+});
+cv.addEventListener("pointerup", e=>{
+  if(glisse && !aGlisse){ const [x,y]=pos(e); poser(lonAt(x), latAt(y)); }
+  glisse=null;
+});
+cv.addEventListener("pointercancel", ()=>{ glisse=null; });
+cv.addEventListener("wheel", e=>{
+  e.preventDefault();
+  const [x,y]=pos(e), lonC=lonAt(x), latC=latAt(y);
+  const avant=vue.k;
+  vue.k *= Math.exp(-e.deltaY*0.0016);
+  vue.k = Math.max(1,Math.min(ZOOM_MAX,vue.k));
+  // On garde le point sous le curseur immobile pendant le zoom.
+  const r=1-avant/vue.k;
+  vue.cx += (lonC-vue.cx)*r; vue.cy += (latC-vue.cy)*r;
+  planifier();
+},{passive:false});
+function planifier(){ if(!planifier.a){ planifier.a=requestAnimationFrame(()=>{ planifier.a=0; dessiner(); }); } }
+function allerA(cx,cy,k){ vue={cx,cy,k}; majTout(); }
+$("#z-plus").onclick=()=>{ vue.k*=1.6; majTout(); };
+$("#z-moins").onclick=()=>{ vue.k/=1.6; majTout(); };
+$("#z-lieu").onclick=()=>allerA(D.mnt.centre[0], D.mnt.centre[1], 4);
+$("#z-tout").onclick=()=>allerA((lon0+lon1)/2,(lat0+lat1)/2,1);
+cv.addEventListener("pointermove", e=>{
+  const [x,y]=pos(e);
+  if(glisse){
+    if(Math.hypot(x-glisse.x,y-glisse.y)>4) aGlisse=true;
+    if(aGlisse){
+      vue.cx = glisse.cx - (x-glisse.x)/W*(B.l1-B.l0);
+      vue.cy = glisse.cy + (y-glisse.y)/H*(B.a1-B.a0);
+      planifier();
+    }
+    return;
+  }
+  const z=alt(lonAt(x),latAt(y));
+  $("#curseur").textContent = z==null ? "—" : `${fmt(z)} m NGF`;
+});
+cv.addEventListener("pointerleave", ()=>$("#curseur").textContent="—");
+
+matchMedia("(prefers-color-scheme:dark)").addEventListener("change", majTout);
+
+majTout();
+connecter();
+</script>
+
+</body>
+</html>

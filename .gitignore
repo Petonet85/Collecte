@@ -2,3 +2,6 @@
 historique.db
 __pycache__/
 *.pyc
+data/cache/
+data/cache_dpclim/
+data/archive/

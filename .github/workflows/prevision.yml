@@ -1,0 +1,58 @@
+name: Prevision Rochereau
+
+# Regenere la page de prevision et la publie sur GitHub Pages.
+# La collecte tourne a part (collecte.yml, radar.yml) ; ce workflow ne fait que
+# lire les donnees publiques et calculer, il n'archive rien.
+#
+# Cadence de 6 h : le temps de concentration du bassin est de 22 h, et la
+# fenetre de prevision porte a 72 h. Rafraichir plus souvent n'apporterait
+# qu'un bruit de mise a jour.
+
+on:
+  schedule:
+    - cron: "40 */6 * * *"
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ["prevoir.py", "floodcast/**", "site/gabarit.html", "site/calage.json"]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: prevision
+  cancel-in-progress: true
+
+jobs:
+  prevoir:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - run: pip install -r requirements.txt
+
+      - name: Calculer la prevision et regenerer la page
+        run: python prevoir.py --horizon 72
+
+      - name: Publier
+        run: |
+          if [ -z "$(git status --porcelain site)" ]; then
+            echo "Page inchangee."
+            exit 0
+          fi
+          git config user.name  "collecte-automatique"
+          git config user.email "actions@github.com"
+          git add site
+          git commit -m "Prevision du $(date -u '+%Y-%m-%d %H:%M') UTC"
+          for essai in 1 2 3; do
+            git pull --rebase --autostash -q && git push -q && exit 0
+            sleep $((essai * 5))
+          done
+          exit 1
