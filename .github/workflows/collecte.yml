@@ -1,9 +1,14 @@
-name: Collecte Hub'Eau
+name: Collecte Sevre Nantaise
 
 on:
   schedule:
     # Toutes les 6 heures (heure UTC). Hub'Eau conservant un mois d'historique,
     # cette frequence laisse une marge tres confortable en cas de panne.
+    #
+    # ATTENTION : ce rythme ne convient PAS a la lame d'eau radar, dont l'API
+    # ne sert que le dernier pas de 5 minutes. On n'en capte ici qu'un cliche
+    # toutes les 6 h, soit 1 pas sur 72 — de quoi verifier que la chaine
+    # fonctionne, pas de quoi reconstituer un cumul de pluie. Voir le README.
     - cron: "17 */6 * * *"
   workflow_dispatch:        # permet aussi un declenchement manuel
 
@@ -28,12 +33,15 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+          cache: pip
 
       - name: Installer les dependances
-        run: pip install requests
+        run: pip install -r requirements.txt
 
-      - name: Collecter les hauteurs
-        run: python collecte.py --depot donnees
+      - name: Collecter hauteurs, debits, nappes et lame d'eau
+        env:
+          METEOFRANCE_API_KEY: ${{ secrets.METEOFRANCE_API_KEY }}
+        run: python collecte.py --depot donnees --radar
 
       - name: Publier les nouvelles mesures
         run: |

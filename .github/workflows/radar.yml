@@ -1,0 +1,61 @@
+name: Lame d'eau radar (haute frequence)
+
+# Workflow OPTIONNEL, volontairement non planifie par defaut.
+#
+# L'API DPRadar ne sert que le dernier pas de 5 minutes : pour reconstituer un
+# cumul de pluie exploitable, il faut interroger toutes les 5 minutes. Ce job
+# tourne alors en continu pendant 30 minutes et capture les 6 pas de la periode ;
+# planifie toutes les 30 minutes, il couvre 100 % du temps.
+#
+# Cout : environ 1 440 minutes d'execution par jour. Sur un depot PRIVE, elles
+# sont facturees au-dela des 2 000 minutes mensuelles offertes — le quota part
+# en un jour et demi. Deux facons de s'en sortir :
+#   * rendre le depot public : les minutes deviennent illimitees ;
+#   * lancer radar.py sur une machine allumee en permanence (voir le README).
+#
+# Pour activer malgre tout, decommentez le bloc schedule.
+
+on:
+  workflow_dispatch:
+  # schedule:
+  #   - cron: "*/30 * * * *"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: radar
+  cancel-in-progress: false
+
+jobs:
+  radar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - run: pip install -r requirements.txt
+
+      - name: Capturer la lame d'eau toutes les 5 minutes
+        env:
+          METEOFRANCE_API_KEY: ${{ secrets.METEOFRANCE_API_KEY }}
+        run: python radar.py --depot donnees --boucle 5 --duree 30
+
+      - name: Publier
+        run: |
+          if [ -z "$(git status --porcelain donnees)" ]; then
+            echo "Rien a publier."
+            exit 0
+          fi
+          git config user.name  "collecte-automatique"
+          git config user.email "actions@github.com"
+          git add donnees
+          git commit -m "Lame d'eau radar du $(date -u '+%Y-%m-%d %H:%M') UTC"
+          git pull --rebase --autostash
+          git push
