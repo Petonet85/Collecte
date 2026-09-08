@@ -157,10 +157,17 @@ function tracer(){
   c.fillText(fmt(pmax,1)+" mm/h",L-6,T+10); c.fillText("0",L-6,T+hPluie);
 
   /* --- niveau */
-  let vals=[...zObs,...Zq["5"],...Zq["95"],PORTE,ATELIER].filter(v=>v!=null&&isFinite(v));
-  let lo=Math.min(...vals),hi=Math.max(...vals);
-  const pad=Math.max((hi-lo)*.12,.15); lo-=pad; hi+=pad;
+  // L'echelle suit l'eau, pas les seuils : en etiage ils sont trois metres plus
+  // haut, et les inclure ecraserait la courbe contre le bord. Un seuil hors
+  // champ est alors signale en marge, avec sa distance.
+  let eau=[...zObs,...Zq["5"],...Zq["95"]].filter(v=>v!=null&&isFinite(v));
+  let lo=Math.min(...eau),hi=Math.max(...eau);
+  const etendue=Math.max(hi-lo,0.4);
+  SEUILS.forEach(s=>{ if(s.cote>hi && s.cote-hi<etendue*1.6) hi=s.cote;
+                      if(s.cote<lo && lo-s.cote<etendue*1.6) lo=s.cote; });
+  const pad=Math.max((hi-lo)*.12,.12); lo-=pad; hi+=pad;
   const Y=v=>yB-(v-lo)/(hi-lo)*hH;
+  const horsChamp=SEUILS.filter(s=>s.cote>hi||s.cote<lo);
 
   c.strokeStyle=css("--trait"); c.fillStyle=css("--sourdine"); c.font="11px system-ui";
   const pas=[0.1,0.25,0.5,1,2].find(p=>(hi-lo)/p<=7)||2;
@@ -185,11 +192,26 @@ function tracer(){
     c.closePath(); c.fill(); });
 
   /* --- seuils de la propriete */
-  SEUILS.forEach((s,k)=>{ const y=Y(s.cote); if(y<yH||y>yB)return;
-    c.strokeStyle=k?css("--seuil2"):css("--seuil"); c.lineWidth=k?1.2:1.7; c.setLineDash(k?[5,4]:[]);
-    c.beginPath(); c.moveTo(L,y+.5); c.lineTo(W-R,y+.5); c.stroke(); c.setLineDash([]);
-    c.fillStyle=c.strokeStyle; c.textAlign="left"; c.font="600 11px "+css("--titre");
-    c.fillText(s.nom.toUpperCase(),L+6,y-5); });
+  SEUILS.forEach((s,k)=>{
+    const col=k?css("--seuil2"):css("--seuil");
+    const y=Y(s.cote);
+    if(y>=yH&&y<=yB){
+      c.strokeStyle=col; c.lineWidth=k?1.2:1.7; c.setLineDash(k?[5,4]:[]);
+      c.beginPath(); c.moveTo(L,y+.5); c.lineTo(W-R,y+.5); c.stroke(); c.setLineDash([]);
+      c.fillStyle=col; c.textAlign="left"; c.font="600 11px "+css("--titre");
+      c.fillText(s.nom.toUpperCase(),L+6,y-5);
+    }
+  });
+  if(horsChamp.length){
+    c.textAlign="right"; c.font="600 11px "+css("--titre");
+    horsChamp.forEach((s,k)=>{
+      const hautDessus=s.cote>hi;
+      c.fillStyle=SEUILS.indexOf(s)?css("--seuil2"):css("--seuil");
+      const ecart=hautDessus? s.cote-hi : lo-s.cote;
+      c.fillText(`${s.nom.toUpperCase()} ${hautDessus?"↑":"↓"} ${fmt(ecart,1)} M PLUS ${hautDessus?"HAUT":"BAS"}`,
+                 W-R-4, (hautDessus?yH+13:yB-5)+k*14);
+    });
+  }
 
   /* --- courbes */
   const ligne=(xs,ys,col,w,dash)=>{ c.strokeStyle=col;c.lineWidth=w;c.setLineDash(dash||[]);
