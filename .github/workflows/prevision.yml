@@ -14,7 +14,7 @@ on:
   workflow_dispatch:
   push:
     branches: [main]
-    paths: ["prevoir.py", "floodcast/**", "site/gabarit.html", "site/calage.json"]
+    paths: ["prevoir.py", "floodcast/**", "docs/gabarit.html", "docs/calage.json"]
 
 permissions:
   contents: write
@@ -43,13 +43,13 @@ jobs:
 
       - name: Publier
         run: |
-          if [ -z "$(git status --porcelain site)" ]; then
+          if [ -z "$(git status --porcelain docs)" ]; then
             echo "Page inchangee."
             exit 0
           fi
           git config user.name  "collecte-automatique"
           git config user.email "actions@github.com"
-          git add site
+          git add docs
           git commit -m "Prevision du $(date -u '+%Y-%m-%d %H:%M') UTC"
           for essai in 1 2 3; do
             git pull --rebase --autostash -q && git push -q && exit 0

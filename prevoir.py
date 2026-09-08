@@ -6,7 +6,7 @@ Enchaine la chaine FloodCast sur les deux stations amont de la Sevre Nantaise,
 convertit le resultat en cote NGF a Rochereau via le bief cale sur quatre
 observations de terrain, et regenere la page consultable.
 
-    python prevoir.py            # ecrit site/index.html
+    python prevoir.py            # ecrit docs/index.html
     python prevoir.py --horizon 96
 """
 
@@ -20,7 +20,7 @@ import numpy as np
 
 BASE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, BASE)
-SITE = os.path.join(BASE, "site")
+SITE = os.path.join(BASE, "docs")
 
 
 def construire(horizon_h=72, verbose=True):
