@@ -16,6 +16,7 @@ import os
 
 import numpy as np
 import pandas as pd
+import requests
 
 BASE = os.path.dirname(os.path.abspath(__file__))
 DOCS = os.path.join(BASE, "docs")
@@ -47,9 +48,10 @@ def animation_radar(fin: pd.Timestamp, heures: int = HEURES_PASSEES) -> dict:
     em = np.asarray(bassin["emprise"], dtype=float)
     cadre = {"lon0": float(em[:, 0].min()), "lon1": float(em[:, 0].max()),
              "lat0": float(em[:, 1].min()), "lat1": float(em[:, 1].max()),
-             "pas_mm": 0.05, "n": 20}
+             "facteur": 24.0, "n": 20}
     contour = [[round(float(x), 4), round(float(y), 4)] for x, y in em[::3]]
-    vide = {"images": [], "emprise": cadre, "contour": contour}
+    vide = {"images": prevision_grille(cadre), "emprise": cadre, "contour": contour,
+            "facteur": 24.0, "n_radar": 0}
 
     fichiers = sorted(glob.glob(os.path.join(BASE, "donnees", "radar", BASSIN_RADAR, "*.csv")))
     if not fichiers:
@@ -71,8 +73,59 @@ def animation_radar(fin: pd.Timestamp, heures: int = HEURES_PASSEES) -> dict:
             "pt": None if "pt_rochereau" not in lot.columns or pd.isna(ligne.get("pt_rochereau"))
                   else round(float(ligne["pt_rochereau"]), 3),
             "g": "" if (g is None or (isinstance(g, float) and pd.isna(g))) else str(g),
+            "type": "radar",
         })
-    return {"images": images, "emprise": cadre, "contour": contour}
+    images += prevision_grille(cadre)
+    return {"images": images, "emprise": cadre, "contour": contour,
+            "facteur": 24.0, "n_radar": sum(1 for i in images if i.get("type") == "radar")}
+
+
+def prevision_grille(cadre, heures: int = 96) -> list:
+    """Champs de pluie prevue sur le bassin, a la maille de la vignette.
+
+    Preleve la prevision AROME/ARPEGE en 20 x 20 points couvrant le bassin —
+    soit 1,5 km, la resolution native d'AROME — et l'encode comme les images
+    radar, pour que l'animation enchaine le passe mesure et l'avenir prevu
+    dans la meme unite : l'intensite en millimetres par heure.
+    """
+    import radar as radar_mf
+
+    n = cadre["n"]
+    lons = np.linspace(cadre["lon0"], cadre["lon1"], n)
+    lats = np.linspace(cadre["lat1"], cadre["lat0"], n)   # du nord au sud, comme l'image
+    LO, LA = np.meshgrid(lons, lats)
+    try:
+        rep = requests.get(
+            "https://api.open-meteo.com/v1/forecast",
+            params={"latitude": ",".join(f"{v:.4f}" for v in LA.ravel()),
+                    "longitude": ",".join(f"{v:.4f}" for v in LO.ravel()),
+                    "hourly": "precipitation", "models": "meteofrance_seamless",
+                    "forecast_days": max(1, min(int(np.ceil(heures / 24)), 7)),
+                    "timezone": "UTC"},
+            headers={"User-Agent": "collecte-sevre-nantaise/2.0"}, timeout=120)
+        rep.raise_for_status()
+        lot = rep.json()
+    except Exception:
+        return []
+    if not isinstance(lot, list) or not lot:
+        return []
+    temps = pd.to_datetime(lot[0]["hourly"]["time"])
+    champ = np.array([x["hourly"]["precipitation"] for x in lot], dtype=float)
+    champ = np.nan_to_num(champ, nan=0.0).reshape(n, n, len(temps))
+
+    images = []
+    maintenant = pd.Timestamp.now("UTC").tz_localize(None)
+    for k, t in enumerate(temps):
+        if t <= maintenant:
+            continue
+        grille = champ[:, :, k]
+        images.append({
+            "t": t.isoformat(), "type": "prevu",
+            "moy": round(float(grille.mean()), 3),
+            "max": round(float(grille.max()), 2),
+            "g": radar_mf.encoder_vignette(grille) if grille.max() > 0.005 else "",
+        })
+    return images
 
 
 def pluie_modele(points, heures: int = HEURES_PASSEES, jours_prevus: int = 4):

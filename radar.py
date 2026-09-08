@@ -50,11 +50,12 @@ ENTETES = {"Accept": "*/*", "User-Agent": "collecte-sevre-nantaise/2.0"}
 # disparait, alors qu'elle tombe bel et bien sur la propriete.
 POINTS = {"rochereau": (-0.99276, 47.000408)}
 
-# Vignette du bassin conservee pour l'animation : 20 x 20 mailles, quantifiees
-# au demi-dixieme de millimetre. Environ 400 octets par pas de temps, et on ne
-# l'archive que lorsqu'il pleut — les pas secs ne meritent pas la place.
+# Vignette du bassin conservee pour l'animation : 20 x 20 mailles. L'intensite
+# est stockee en racine carree — un octet couvre alors 0 a 113 mm/h avec une
+# resolution fine dans les faibles valeurs, la ou la lecture est la plus utile.
+# Environ 400 octets par pas de temps, et rien du tout quand il ne pleut pas.
 VIGNETTE = 20
-VIGNETTE_PAS = 0.05
+VIGNETTE_FACTEUR = 24.0        # q = racine(mm/h) * facteur
 
 # La passerelle Meteo-France coupe son point d'entree ("303001 SUSPENDED") des
 # qu'on l'interroge trop vite. On reessaie largement espace plutot que d'insister.
@@ -202,8 +203,19 @@ def derniere_grille(cle, maille=MAILLE):
 # Extraction
 # --------------------------------------------------------------------------- #
 
-def _vignette(bloc, masque, n=VIGNETTE):
-    """Reduit la fenetre du bassin a une petite grille, pour l'animation."""
+def encoder_vignette(champ_mm_h):
+    """Quantifie un champ d'intensite (mm/h) en un octet par maille."""
+    q = np.clip(np.round(np.sqrt(np.maximum(champ_mm_h, 0)) * VIGNETTE_FACTEUR), 0, 255)
+    return base64.b64encode(q.astype(np.uint8).tobytes()).decode()
+
+
+def _vignette(bloc, masque, duree_min, n=VIGNETTE):
+    """Reduit la fenetre du bassin a une petite grille d'intensite, en mm/h.
+
+    On passe en mm/h plutot qu'en cumul sur le pas de temps : c'est la seule
+    unite qui permette de comparer une image radar de cinq minutes a une
+    prevision horaire dans la meme animation.
+    """
     h, w = bloc.shape
     lignes = np.array_split(np.arange(h), min(n, h))
     colonnes = np.array_split(np.arange(w), min(n, w))
@@ -213,8 +225,7 @@ def _vignette(bloc, masque, n=VIGNETTE):
             sous = bloc[np.ix_(li, co)]
             m = masque[np.ix_(li, co)]
             out[i, j] = float(np.nanmean(sous[m])) if m.any() else 0.0
-    q = np.clip(np.round(out / VIGNETTE_PAS), 0, 255).astype(np.uint8)
-    return base64.b64encode(q.tobytes()).decode(), q.shape
+    return encoder_vignette(out * (60.0 / max(duree_min, 1))), out.shape
 
 
 def lame_bassin(contenu, emprise, surface_km2, cache_masque=None, points=None):
@@ -262,13 +273,20 @@ def lame_bassin(contenu, emprise, surface_km2, cache_masque=None, points=None):
                                            else None if brut == nodata
                                            else round(brut * gain + offset, 3))
 
+        quoi_tmp = f["dataset1/what"].attrs
+        _dec = lambda v: v.decode() if isinstance(v, bytes) else str(v)
+        _deb = f"{_dec(quoi_tmp['startdate'])}{_dec(quoi_tmp['starttime'])}"
+        _fin = f"{_dec(quoi_tmp['enddate'])}{_dec(quoi_tmp['endtime'])}"
+        _duree = (datetime.strptime(_fin, "%Y%m%d%H%M%S")
+                  - datetime.strptime(_deb, "%Y%m%d%H%M%S")).total_seconds() / 60
+
         # --- vignette pour l'animation, seulement s'il pleut quelque part
         grille = None
         if valides.any() and pluie[valides].max() > 0:
             plein = jeu["data"][m["l0"]:m["l1"], m["c0"]:m["c1"]].astype(float)
             plein = np.where(plein == undetect, 0.0,
                              np.where(plein == nodata, np.nan, plein * gain + offset))
-            grille, forme = _vignette(plein, m["masque"])
+            grille, forme = _vignette(plein, m["masque"], _duree)
 
         quoi = f["dataset1/what"].attrs
         dec = lambda v: v.decode() if isinstance(v, bytes) else str(v)

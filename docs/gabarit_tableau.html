@@ -101,7 +101,7 @@ a{color:var(--eau)}
 </div>
 
 <div class="panneau" id="anim-panneau">
-  <h2>Pluie radar sur le bassin — 48 dernières heures</h2>
+  <h2>Pluie sur le bassin — 48 h mesurées puis 4 jours prévus</h2>
   <div class="anim">
     <canvas id="anim" height="380"></canvas>
     <div class="anim-cmd">
@@ -335,19 +335,21 @@ $("#graphe").addEventListener("mouseleave",()=>$("#tt").style.opacity=0);
 /* --------------------------------------------------------------- animation */
 const A=D.animation||{images:[],emprise:null};
 let iAnim=0, jeu=null;
+/* Intensites stockees en racine carree : un octet couvre 0 a 113 mm/h avec
+   une resolution fine dans les faibles valeurs. */
 function decoder(b64,n){
   if(!b64) return null;
-  const bin=atob(b64), a=new Float32Array(n*n);
-  for(let k=0;k<Math.min(bin.length,n*n);k++) a[k]=bin.charCodeAt(k)*A.emprise.pas_mm;
+  const f=A.facteur||24, bin=atob(b64), a=new Float32Array(n*n);
+  for(let k=0;k<Math.min(bin.length,n*n);k++){ const q=bin.charCodeAt(k)/f; a[k]=q*q; }
   return a;
 }
-function couleurPluie(mm){
-  if(mm<=0.005) return null;
-  // Echelle calquee sur les lames d'eau usuelles au pas de 5 minutes.
-  const p=[[0.02,"#bcd4e6"],[0.08,"#7fb0d0"],[0.2,"#3d84b0"],[0.5,"#1f5c8a"],
-           [1.0,"#2d4b8f"],[2.0,"#6b3fa0"],[4.0,"#9b2f6b"]];
-  for(const [s,c] of p) if(mm<s) return c;
-  return "#b8442a";
+/* Echelle d'intensite en mm/h, dans l'esprit des cartes radar usuelles. */
+const ECHELLE=[[0.1,"#cfe0ea"],[0.5,"#8fbcd8"],[1,"#4a90bd"],[2,"#22648f"],
+               [5,"#28518f"],[10,"#6b3fa0"],[20,"#9b2f6b"],[50,"#b8442a"]];
+function couleurPluie(mmh){
+  if(mmh<0.05) return null;
+  for(const [s,c] of ECHELLE) if(mmh<s) return c;
+  return "#7a1f1f";
 }
 function tracerAnim(){
   const cv=$("#anim"); if(!cv||!A.emprise) return;
@@ -378,13 +380,32 @@ function tracerAnim(){
     c.globalAlpha=1;
   }
   if(!g){ c.fillStyle=css("--sourdine"); c.font="13px "+css("--texte"); c.textAlign="center";
-          c.fillText(img?"Pas de pluie sur le bassin à cet instant":"Aucune image archivée",W/2,H/2); }
+          c.fillText(img?"Pas de pluie sur le bassin à cet instant":"Aucune image disponible",W/2,H/2); }
+  // repere entre passe mesure et avenir prevu
+  if(A.n_radar>0 && A.n_radar<A.images.length){
+    const bascule=A.images[A.n_radar];
+    if(img && bascule){ const av=dt(img.t)>=dt(bascule.t);
+      c.strokeStyle=av?css("--prev"):css("--radar"); c.lineWidth=3;
+      c.strokeRect(1.5,1.5,W-3,H-3); }
+  }
   if(img){
     c.fillStyle=css("--encre"); c.font="600 12px "+css("--titre"); c.textAlign="left";
-    c.fillText(`MOYENNE ${fmt(img.moy,3)} MM · MAX ${fmt(img.max,2)} MM`,12,H-10);
-    if(img.pt!=null){ c.fillStyle=css("--seuil");
-      c.fillText(`CHEZ VOUS ${fmt(img.pt,2)} MM`,12,H-26); }
+    const prevu=img.type==="prevu";
+    c.fillText(`MOYENNE ${fmt(img.moy,2)} MM/H · MAX ${fmt(img.max,1)} MM/H`,12,H-10);
+    c.fillStyle=prevu?css("--prev"):css("--radar");
+    c.fillText(prevu?"PRÉVISION AROME":"RADAR MESURÉ",12,H-26);
+    if(!prevu && img.pt!=null){ c.fillStyle=css("--seuil"); c.textAlign="right";
+      c.fillText(`CHEZ VOUS ${fmt(img.pt*12,1)} MM/H`,W-12,H-10); }
   }
+  // barre d'echelle des intensites
+  const bx=W-14, by=14, bh=13;
+  c.textAlign="right"; c.font="9px "+css("--mono");
+  ECHELLE.forEach(([v,col],k)=>{
+    c.fillStyle=col; c.fillRect(bx-16,by+k*bh,16,bh-1);
+    c.fillStyle=css("--sourdine"); c.fillText(v<1?String(v):String(v),bx-19,by+k*bh+9);
+  });
+  c.fillStyle=css("--sourdine"); c.font="9px "+css("--mono");
+  c.fillText("mm/h",bx,by+ECHELLE.length*bh+9);
 }
 function majAnim(){
   const img=A.images[iAnim];
@@ -397,12 +418,17 @@ function animer(){
     $("#note-anim").innerHTML="Aucune image radar archivée pour l'instant : la vignette du bassin "
       +"n'est enregistrée que depuis peu, et uniquement lorsqu'il pleut. Elle se remplira au premier passage pluvieux.";
     $("#jouer").disabled=true; return; }
-  $("#curseur-anim").max=A.images.length-1; iAnim=A.images.length-1;
+  $("#curseur-anim").max=A.images.length-1;
+  const nR=A.n_radar||0, nP=A.images.length-nR;
   const avecPluie=A.images.filter(i=>i.g).length;
-  $("#note-anim").innerHTML=`${A.images.length} pas de temps archivés sur 48 h, dont `
-    +`<b>${avecPluie} avec de la pluie</b>. Maille d'environ 1,5 km, pas de 5 minutes. `
-    +`Les points gris dessinent l'emprise du bassin versant de Saint-Laurent ; `
-    +`la valeur « chez vous » est relevée au pixel de Rochereau, comparable à votre pluviomètre.`;
+  $("#note-anim").innerHTML=`<b>${nR} images radar</b> des 48 h écoulées puis <b>${nP} heures de prévision</b> `
+    +`AROME, dont ${avecPluie} portent de la pluie. Le cadre est bleu foncé sur le passé mesuré, `
+    +`bleu clair sur l'avenir prévu. Tout est en <b>millimètres par heure</b> : c'est la seule unité qui `
+    +`permette de comparer une image radar de 5 minutes à une prévision horaire. `
+    +`Maille de 1,5 km, la résolution native d'AROME. Les points gris dessinent le bassin versant de `
+    +`Saint-Laurent ; « chez vous » est relevé au pixel de Rochereau, comparable à votre pluviomètre.`;
+  // on ouvre sur l'instant present plutot qu'a la fin de la prevision
+  iAnim=Math.max(0,Math.min(nR>0?nR-1:0,A.images.length-1));
   $("#curseur-anim").oninput=e=>{ iAnim=+e.target.value; majAnim(); };
   $("#jouer").onclick=()=>{
     if(jeu){ clearInterval(jeu); jeu=null; $("#jouer").textContent="▶"; return; }
