@@ -37,6 +37,44 @@ def pluie_radar(fin: pd.Timestamp, heures: int = HEURES_PASSEES) -> pd.Series:
     return horaire.loc[fin - pd.Timedelta(hours=heures):fin]
 
 
+def animation_radar(fin: pd.Timestamp, heures: int = HEURES_PASSEES) -> dict:
+    """Vignettes radar des dernieres heures, pour l'animation sur le bassin.
+
+    Chaque pas de temps ou il a plu porte une grille 20 x 20 quantifiee ; les
+    pas secs n'en portent pas et sont restitues comme des images vides.
+    """
+    bassin = json.load(open(os.path.join(BASE, "bassins.json"), encoding="utf-8"))[BASSIN_RADAR]
+    em = np.asarray(bassin["emprise"], dtype=float)
+    cadre = {"lon0": float(em[:, 0].min()), "lon1": float(em[:, 0].max()),
+             "lat0": float(em[:, 1].min()), "lat1": float(em[:, 1].max()),
+             "pas_mm": 0.05, "n": 20}
+    contour = [[round(float(x), 4), round(float(y), 4)] for x, y in em[::3]]
+    vide = {"images": [], "emprise": cadre, "contour": contour}
+
+    fichiers = sorted(glob.glob(os.path.join(BASE, "donnees", "radar", BASSIN_RADAR, "*.csv")))
+    if not fichiers:
+        return vide
+    lot = pd.concat([pd.read_csv(f, parse_dates=["instant_utc"]) for f in fichiers])
+    if "grille" not in lot.columns:
+        return vide
+    lot = lot.set_index(pd.DatetimeIndex(lot["instant_utc"]).tz_convert(None)).sort_index()
+    lot = lot.loc[fin - pd.Timedelta(hours=heures):fin]
+    lot = lot[~lot.index.duplicated(keep="last")]
+
+    images = []
+    for instant, ligne in lot.iterrows():
+        g = ligne.get("grille")
+        images.append({
+            "t": instant.isoformat(),
+            "moy": None if pd.isna(ligne["lame_mm"]) else round(float(ligne["lame_mm"]), 4),
+            "max": None if pd.isna(ligne["lame_max_mm"]) else round(float(ligne["lame_max_mm"]), 3),
+            "pt": None if "pt_rochereau" not in lot.columns or pd.isna(ligne.get("pt_rochereau"))
+                  else round(float(ligne["pt_rochereau"]), 3),
+            "g": "" if (g is None or (isinstance(g, float) and pd.isna(g))) else str(g),
+        })
+    return {"images": images, "emprise": cadre, "contour": contour}
+
+
 def pluie_modele(points, heures: int = HEURES_PASSEES, jours_prevus: int = 4):
     """Analyse Meteo-France passee et prevision deterministe, horaires."""
     from floodcast.sources import meteo
@@ -56,6 +94,21 @@ def pluie_prevue(points, jours: int = 4) -> pd.DataFrame:
     tab = ens.to_numpy()
     return pd.DataFrame({q: np.percentile(tab, q, axis=1) for q in (10, 50, 90)},
                         index=ens.index)
+
+
+def _cumul_point(fin: pd.Timestamp, heures: int = HEURES_PASSEES):
+    """Cumul radar au point suivi, a comparer directement a un pluviometre."""
+    fichiers = sorted(glob.glob(os.path.join(BASE, "donnees", "radar", BASSIN_RADAR, "*.csv")))
+    if not fichiers:
+        return None
+    lot = pd.concat([pd.read_csv(f, parse_dates=["instant_utc"]) for f in fichiers])
+    if "pt_rochereau" not in lot.columns:
+        return None
+    idx = pd.DatetimeIndex(lot["instant_utc"]).tz_convert(None)
+    ser = pd.Series(pd.to_numeric(lot["pt_rochereau"], errors="coerce").to_numpy(), index=idx)
+    ser = ser[~ser.index.duplicated(keep="last")].sort_index()
+    ser = ser.loc[fin - pd.Timedelta(hours=heures):fin].dropna()
+    return round(float(ser.sum()), 2) if len(ser) else None
 
 
 def assembler(prevision: dict, horizon_h: int = 72) -> dict:
@@ -127,9 +180,11 @@ def assembler(prevision: dict, horizon_h: int = 72) -> dict:
                 "radar_mesure_mm": round(float(radar.sum()), 1) if len(radar) else None,
                 "radar_heures": int(radar.notna().sum()) if len(radar) else 0,
                 "analyse_48h_mm": round(float(passe.sum()), 1),
+                "point_rochereau_mm": _cumul_point(t0),
                 "prevu_median_mm": round(float(prevue[50].sum()), 1) if len(prevue) else None,
                 "prevu_p90_mm": round(float(prevue[90].sum()), 1) if len(prevue) else None,
             },
         },
+        "animation": animation_radar(t0),
         "periodes_retour": {"maison": seuils["T_maison"], "atelier": seuils["T_atelier"]},
     }

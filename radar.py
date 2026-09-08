@@ -16,6 +16,7 @@ La cle se lit dans METEOFRANCE_API_KEY, ou a defaut dans ~/.config/floodcast/env
 """
 
 import argparse
+import base64
 import csv
 import gzip
 import io
@@ -43,6 +44,17 @@ MAILLE = 500          # 500 m -> HDF5 ODIM lisible avec h5py ; 1000 m -> BUFR (e
 CODE_LAME_METROPOLE = "IPRN20"
 
 ENTETES = {"Accept": "*/*", "User-Agent": "collecte-sevre-nantaise/2.0"}
+
+# Points suivis individuellement, en plus de la moyenne de bassin. Une averse
+# convective couvre quelques kilometres carres : moyennee sur 576 km2 elle
+# disparait, alors qu'elle tombe bel et bien sur la propriete.
+POINTS = {"rochereau": (-0.99276, 47.000408)}
+
+# Vignette du bassin conservee pour l'animation : 20 x 20 mailles, quantifiees
+# au demi-dixieme de millimetre. Environ 400 octets par pas de temps, et on ne
+# l'archive que lorsqu'il pleut — les pas secs ne meritent pas la place.
+VIGNETTE = 20
+VIGNETTE_PAS = 0.05
 
 # La passerelle Meteo-France coupe son point d'entree ("303001 SUSPENDED") des
 # qu'on l'interroge trop vite. On reessaie largement espace plutot que d'insister.
@@ -190,7 +202,22 @@ def derniere_grille(cle, maille=MAILLE):
 # Extraction
 # --------------------------------------------------------------------------- #
 
-def lame_bassin(contenu, emprise, surface_km2, cache_masque=None):
+def _vignette(bloc, masque, n=VIGNETTE):
+    """Reduit la fenetre du bassin a une petite grille, pour l'animation."""
+    h, w = bloc.shape
+    lignes = np.array_split(np.arange(h), min(n, h))
+    colonnes = np.array_split(np.arange(w), min(n, w))
+    out = np.zeros((len(lignes), len(colonnes)))
+    for i, li in enumerate(lignes):
+        for j, co in enumerate(colonnes):
+            sous = bloc[np.ix_(li, co)]
+            m = masque[np.ix_(li, co)]
+            out[i, j] = float(np.nanmean(sous[m])) if m.any() else 0.0
+    q = np.clip(np.round(out / VIGNETTE_PAS), 0, 255).astype(np.uint8)
+    return base64.b64encode(q.tobytes()).decode(), q.shape
+
+
+def lame_bassin(contenu, emprise, surface_km2, cache_masque=None, points=None):
     """Lame d'eau moyenne (mm) sur le bassin, pour le pas de temps du fichier."""
     import h5py
 
@@ -220,6 +247,29 @@ def lame_bassin(contenu, emprise, surface_km2, cache_masque=None):
             qualite = float(np.mean(qbloc[valides] * float(qa["gain"]) + float(qa["offset"]))) \
                 if valides.any() else None
 
+        # --- valeur ponctuelle aux points suivis
+        valeurs_points = {}
+        if points:
+            ulx, uly = _projeter(float(where["UL_lon"]), float(where["UL_lat"]))
+            sx, sy = float(where["xscale"]), float(where["yscale"])
+            for nom, (lon, lat) in points.items():
+                px, py = _projeter(lon, lat)
+                i = int((px - ulx) / sx)
+                j = int((uly - py) / sy)
+                if 0 <= i < int(where["xsize"]) and 0 <= j < int(where["ysize"]):
+                    brut = float(jeu["data"][j, i])
+                    valeurs_points[nom] = (0.0 if brut == undetect
+                                           else None if brut == nodata
+                                           else round(brut * gain + offset, 3))
+
+        # --- vignette pour l'animation, seulement s'il pleut quelque part
+        grille = None
+        if valides.any() and pluie[valides].max() > 0:
+            plein = jeu["data"][m["l0"]:m["l1"], m["c0"]:m["c1"]].astype(float)
+            plein = np.where(plein == undetect, 0.0,
+                             np.where(plein == nodata, np.nan, plein * gain + offset))
+            grille, forme = _vignette(plein, m["masque"])
+
         quoi = f["dataset1/what"].attrs
         dec = lambda v: v.decode() if isinstance(v, bytes) else str(v)
         debut = f"{dec(quoi['startdate'])}{dec(quoi['starttime'])}"
@@ -230,7 +280,7 @@ def lame_bassin(contenu, emprise, surface_km2, cache_masque=None):
 
     if not valides.any():
         return None, cache_masque
-    return {
+    mesure = {
         "instant_utc": instant.strftime("%Y-%m-%dT%H:%M:%SZ"),
         "duree_min": int(round(duree)),
         "lame_mm": round(float(pluie[valides].mean()), 4),
@@ -238,7 +288,11 @@ def lame_bassin(contenu, emprise, surface_km2, cache_masque=None):
         "pixels": int(valides.sum()),
         "couverture": round(float(valides.mean()), 3),
         "qualite": None if qualite is None else round(qualite, 3),
-    }, cache_masque
+        "grille": grille or "",
+    }
+    for nom, v in valeurs_points.items():
+        mesure[f"pt_{nom}"] = v
+    return mesure, cache_masque
 
 
 # --------------------------------------------------------------------------- #
@@ -246,7 +300,7 @@ def lame_bassin(contenu, emprise, surface_km2, cache_masque=None):
 # --------------------------------------------------------------------------- #
 
 COLONNES = ["instant_utc", "duree_min", "lame_mm", "lame_max_mm", "pixels",
-            "couverture", "qualite"]
+            "couverture", "qualite"] + [f"pt_{n}" for n in POINTS] + ["grille"]
 
 
 def ecrire(mesure, code_bassin, dossier):
@@ -296,7 +350,8 @@ def collecter(bassins, dossier, cle, caches=None, mode="auto"):
     for _, contenu in grilles:
         for code, bassin in bassins.items():
             mesure, caches[code] = lame_bassin(contenu, bassin["emprise"],
-                                               bassin["surface_km2"], caches.get(code))
+                                               bassin["surface_km2"], caches.get(code),
+                                               points=POINTS if code == "M703243010" else None)
             if mesure is None:
                 resultats.append((code, None, False))
                 continue

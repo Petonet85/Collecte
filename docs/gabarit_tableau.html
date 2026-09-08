@@ -60,6 +60,14 @@ tr.repere td{color:var(--seuil)}
 .note{font-size:12.5px;color:var(--sourdine);line-height:1.55}
 .dedans{color:var(--alerte);font-weight:600}
 .scroll{overflow-x:auto}
+.anim{position:relative}
+.anim-cmd{display:flex;align-items:center;gap:11px;margin-top:9px}
+.anim-cmd button{width:34px;height:28px;border:1px solid var(--trait);background:var(--papier);
+  color:var(--encre);cursor:pointer;font-size:13px;line-height:1;font-family:var(--mono)}
+.anim-cmd button:hover{border-color:var(--eau);color:var(--eau)}
+.anim-cmd input[type=range]{flex:1;accent-color:var(--eau);min-width:0}
+.anim-t{font-family:var(--mono);font-size:12.5px;font-variant-numeric:tabular-nums;
+  white-space:nowrap;color:var(--sourdine);min-width:132px;text-align:right}
 footer{margin-top:26px;padding-top:14px;border-top:1px solid var(--trait);font-size:12px;color:var(--sourdine)}
 a{color:var(--eau)}
 .tt{position:fixed;pointer-events:none;background:var(--carte);border:1px solid var(--trait);
@@ -90,6 +98,19 @@ a{color:var(--eau)}
     <span><i class="sw" style="background:var(--seuil)"></i>porte de la maison</span>
     <span><i class="sw" style="background:var(--seuil2)"></i>atelier</span>
   </div>
+</div>
+
+<div class="panneau" id="anim-panneau">
+  <h2>Pluie radar sur le bassin — 48 dernières heures</h2>
+  <div class="anim">
+    <canvas id="anim" height="380"></canvas>
+    <div class="anim-cmd">
+      <button id="jouer" aria-label="Lecture">▶</button>
+      <input id="curseur-anim" type="range" min="0" max="0" value="0" aria-label="Instant">
+      <span class="anim-t" id="anim-t">—</span>
+    </div>
+  </div>
+  <p class="note" id="note-anim"></p>
 </div>
 
 <div class="grille2">
@@ -274,12 +295,16 @@ function bilanPluie(){
   $("#pluie").innerHTML=`<thead><tr><th>Période</th><th>Médiane</th><th>Scénario haut</th></tr></thead><tbody>`
     +`<tr><td>48 h écoulées (analyse)</td><td>${fmt(p.analyse_48h_mm,1)} mm</td><td>—</td></tr>`
     +`<tr class="repere"><td>dont radar mesuré (${p.radar_heures} h)</td><td>${p.radar_mesure_mm==null?"—":fmt(p.radar_mesure_mm,1)+" mm"}</td><td>—</td></tr>`
+    +(p.point_rochereau_mm!=null?`<tr class="repere"><td>radar au pixel de Rochereau</td><td>${fmt(p.point_rochereau_mm,2)} mm</td><td>—</td></tr>`:"")
     +par24.map(([l,a,b])=>`<tr><td>${l}</td><td>${fmt(a,1)} mm</td><td>${fmt(b,1)} mm</td></tr>`).join("")
     +`</tbody>`;
   $("#note-pluie").innerHTML=`La lame d'eau <b>radar</b> est mesurée sur l'emprise du bassin toutes les 5 minutes `
     +`et archivée par ce dépôt : elle ne remonte qu'au démarrage de l'archivage. Au-delà, l'<b>analyse</b> `
     +`Météo-France prend le relais — c'est un modèle, pas une mesure. La prévision vient d'un ensemble de `
-    +`111 scénarios (ICON-D2, ICON-EU, ECMWF).`;
+    +`111 scénarios (ICON-D2, ICON-EU, ECMWF).<br><br>`
+    +`La ligne <b>« radar au pixel de Rochereau »</b> est directement comparable à un pluviomètre posé chez vous. `
+    +`Une averse convective couvre quelques kilomètres carrés : moyennée sur les 576 km² du bassin elle disparaît, `
+    +`alors qu'elle tombe bel et bien sur la propriété. Si votre relevé et ce chiffre divergent, c'est le vôtre qui fait foi.`;
 }
 function pied(){
   $("#pied").innerHTML=`Hub'Eau (hydrométrie, piézométrie) · Météo-France, API Données Radar et modèles AROME/ARPEGE `
@@ -307,8 +332,87 @@ $("#graphe").addEventListener("mousemove",e=>{
 });
 $("#graphe").addEventListener("mouseleave",()=>$("#tt").style.opacity=0);
 
-function rendre(){ entete(); kpis(); scenarios(); bilanPluie(); pied(); tracer(); }
-addEventListener("resize",tracer);
+/* --------------------------------------------------------------- animation */
+const A=D.animation||{images:[],emprise:null};
+let iAnim=0, jeu=null;
+function decoder(b64,n){
+  if(!b64) return null;
+  const bin=atob(b64), a=new Float32Array(n*n);
+  for(let k=0;k<Math.min(bin.length,n*n);k++) a[k]=bin.charCodeAt(k)*A.emprise.pas_mm;
+  return a;
+}
+function couleurPluie(mm){
+  if(mm<=0.005) return null;
+  // Echelle calquee sur les lames d'eau usuelles au pas de 5 minutes.
+  const p=[[0.02,"#bcd4e6"],[0.08,"#7fb0d0"],[0.2,"#3d84b0"],[0.5,"#1f5c8a"],
+           [1.0,"#2d4b8f"],[2.0,"#6b3fa0"],[4.0,"#9b2f6b"]];
+  for(const [s,c] of p) if(mm<s) return c;
+  return "#b8442a";
+}
+function tracerAnim(){
+  const cv=$("#anim"); if(!cv||!A.emprise) return;
+  const dpr=devicePixelRatio||1, W=cv.parentElement.clientWidth-2, H=380;
+  cv.width=W*dpr; cv.height=H*dpr; cv.style.width=W+"px"; cv.style.height=H+"px";
+  const c=cv.getContext("2d"); c.setTransform(dpr,0,0,dpr,0,0);
+  c.fillStyle=css("--papier"); c.fillRect(0,0,W,H);
+  const E=A.emprise, pad=12;
+  const kx=(W-2*pad)/(E.lon1-E.lon0), ky=(H-2*pad)/(E.lat1-E.lat0), k=Math.min(kx,ky);
+  const ox=(W-(E.lon1-E.lon0)*k)/2, oy=(H-(E.lat1-E.lat0)*k)/2;
+  const X=l=>ox+(l-E.lon0)*k, Y=l=>H-oy-(l-E.lat0)*k;
+
+  const img=A.images[iAnim];
+  const g=img?decoder(img.g,E.n):null;
+  if(g){
+    const cw=(E.lon1-E.lon0)*k/E.n, ch=(E.lat1-E.lat0)*k/E.n;
+    for(let j=0;j<E.n;j++) for(let i=0;i<E.n;i++){
+      const col=couleurPluie(g[j*E.n+i]); if(!col) continue;
+      c.fillStyle=col; c.globalAlpha=.88;
+      c.fillRect(X(E.lon0+(i/E.n)*(E.lon1-E.lon0))-.5, Y(E.lat1-(j/E.n)*(E.lat1-E.lat0))-.5, cw+1, ch+1);
+    }
+    c.globalAlpha=1;
+  }
+  if(A.contour){
+    c.fillStyle=css("--sourdine"); c.globalAlpha=.30;
+    const r=Math.max(1.6,k*0.004);
+    A.contour.forEach(([lo,la])=>{ c.beginPath(); c.arc(X(lo),Y(la),r,0,7); c.fill(); });
+    c.globalAlpha=1;
+  }
+  if(!g){ c.fillStyle=css("--sourdine"); c.font="13px "+css("--texte"); c.textAlign="center";
+          c.fillText(img?"Pas de pluie sur le bassin à cet instant":"Aucune image archivée",W/2,H/2); }
+  if(img){
+    c.fillStyle=css("--encre"); c.font="600 12px "+css("--titre"); c.textAlign="left";
+    c.fillText(`MOYENNE ${fmt(img.moy,3)} MM · MAX ${fmt(img.max,2)} MM`,12,H-10);
+    if(img.pt!=null){ c.fillStyle=css("--seuil");
+      c.fillText(`CHEZ VOUS ${fmt(img.pt,2)} MM`,12,H-26); }
+  }
+}
+function majAnim(){
+  const img=A.images[iAnim];
+  $("#anim-t").textContent=img?fdate(dt(img.t)):"—";
+  $("#curseur-anim").value=iAnim;
+  tracerAnim();
+}
+function animer(){
+  if(!A.images.length){ $("#anim-panneau").hidden=false; tracerAnim();
+    $("#note-anim").innerHTML="Aucune image radar archivée pour l'instant : la vignette du bassin "
+      +"n'est enregistrée que depuis peu, et uniquement lorsqu'il pleut. Elle se remplira au premier passage pluvieux.";
+    $("#jouer").disabled=true; return; }
+  $("#curseur-anim").max=A.images.length-1; iAnim=A.images.length-1;
+  const avecPluie=A.images.filter(i=>i.g).length;
+  $("#note-anim").innerHTML=`${A.images.length} pas de temps archivés sur 48 h, dont `
+    +`<b>${avecPluie} avec de la pluie</b>. Maille d'environ 1,5 km, pas de 5 minutes. `
+    +`Les points gris dessinent l'emprise du bassin versant de Saint-Laurent ; `
+    +`la valeur « chez vous » est relevée au pixel de Rochereau, comparable à votre pluviomètre.`;
+  $("#curseur-anim").oninput=e=>{ iAnim=+e.target.value; majAnim(); };
+  $("#jouer").onclick=()=>{
+    if(jeu){ clearInterval(jeu); jeu=null; $("#jouer").textContent="▶"; return; }
+    $("#jouer").textContent="❚❚";
+    jeu=setInterval(()=>{ iAnim=(iAnim+1)%A.images.length; majAnim(); },220);
+  };
+  majAnim();
+}
+function rendre(){ entete(); kpis(); scenarios(); bilanPluie(); pied(); tracer(); animer(); }
+addEventListener("resize",()=>{tracer();tracerAnim();});
 matchMedia("(prefers-color-scheme:dark)").addEventListener("change",rendre);
 rendre();
 </script>
