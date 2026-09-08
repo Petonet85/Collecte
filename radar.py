@@ -50,13 +50,15 @@ ENTETES = {"Accept": "*/*", "User-Agent": "collecte-sevre-nantaise/2.0"}
 # disparait, alors qu'elle tombe bel et bien sur la propriete.
 POINTS = {"rochereau": (-0.99276, 47.000408)}
 
-# Vignette du bassin conservee pour l'animation : 32 x 32 mailles, soit
-# environ 875 m — proche des 500 m natifs du radar, et compatible avec le
-# quota d'Open-Meteo pour le champ de prevision qui prolonge l'animation. L'intensite
+# Vignette du bassin conservee pour l'animation : 24 x 24 mailles, soit
+# environ 1,2 km. La finesse n'est pas limitee par le radar, qui donne du
+# 500 m, mais par le champ de prevision qui prolonge l'animation : Open-Meteo
+# facture UN APPEL PAR POINT, et 24 x 24 tient dans le quota avec de la marge
+# pour le reste de la chaine. Les deux grilles doivent coincider. L'intensite
 # est stockee en racine carree — un octet couvre alors 0 a 113 mm/h avec une
 # resolution fine dans les faibles valeurs, la ou la lecture est la plus utile.
 # Environ 400 octets par pas de temps, et rien du tout quand il ne pleut pas.
-VIGNETTE = 32
+VIGNETTE = 24
 VIGNETTE_FACTEUR = 24.0        # q = racine(mm/h) * facteur
 
 # La passerelle Meteo-France coupe son point d'entree ("303001 SUSPENDED") des

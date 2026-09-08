@@ -24,6 +24,10 @@ DOCS = os.path.join(BASE, "docs")
 BASSIN_RADAR = "M703243010"
 HEURES_PASSEES = 48
 
+# Open-Meteo facture un appel par point : on reste sous les 600 par minute.
+TAILLE_LOT = 200
+PAUSE_LOT = 24.0
+
 
 def pluie_radar(fin: pd.Timestamp, heures: int = HEURES_PASSEES) -> pd.Series:
     """Lame d'eau radar horaire archivee sur le bassin (mm/h)."""
@@ -37,6 +41,25 @@ def pluie_radar(fin: pd.Timestamp, heures: int = HEURES_PASSEES) -> pd.Series:
     # Chaque valeur est un cumul sur cinq minutes : la somme horaire est un mm/h.
     horaire = ser.resample("1h").sum(min_count=1)
     return horaire.loc[fin - pd.Timedelta(hours=heures):fin]
+
+
+def _prevision_precedente():
+    """Champs de prevision de la derniere execution, encore valables.
+
+    Un refus temporaire du fournisseur ne doit pas vider le panneau : mieux
+    vaut un champ d'il y a six heures, date comme tel, que rien du tout.
+    """
+    chemin = os.path.join(DOCS, "tableau.json")
+    if not os.path.exists(chemin):
+        return []
+    try:
+        with open(chemin, encoding="utf-8") as fh:
+            ancien = json.load(fh)["animation"]["images"]
+    except Exception:
+        return []
+    maintenant = pd.Timestamp.now("UTC").tz_localize(None)
+    return [i for i in ancien
+            if i.get("type") == "prevu" and pd.Timestamp(i["t"]) > maintenant]
 
 
 def _fond_carte():
@@ -59,9 +82,10 @@ def animation_radar(fin: pd.Timestamp, heures: int = HEURES_PASSEES) -> dict:
     em = np.asarray(bassin["emprise"], dtype=float)
     cadre = {"lon0": float(em[:, 0].min()), "lon1": float(em[:, 0].max()),
              "lat0": float(em[:, 1].min()), "lat1": float(em[:, 1].max()),
-             "facteur": 24.0, "n": 32}
+             "facteur": 24.0, "n": 24}
     contour = [[round(float(x), 4), round(float(y), 4)] for x, y in em[::3]]
-    vide = {"images": prevision_grille(cadre), "emprise": cadre, "contour": contour,
+    prevues_vide = prevision_grille(cadre) or _prevision_precedente()
+    vide = {"images": prevues_vide, "emprise": cadre, "contour": contour,
             "fond": _fond_carte(), "facteur": 24.0, "n_radar": 0}
 
     fichiers = sorted(glob.glob(os.path.join(BASE, "donnees", "radar", BASSIN_RADAR, "*.csv")))
@@ -86,7 +110,10 @@ def animation_radar(fin: pd.Timestamp, heures: int = HEURES_PASSEES) -> dict:
             "g": "" if (g is None or (isinstance(g, float) and pd.isna(g))) else str(g),
             "type": "radar",
         })
-    images += prevision_grille(cadre)
+    prevues = prevision_grille(cadre)
+    if not prevues:
+        prevues = _prevision_precedente()
+    images += prevues
     return {"images": images, "emprise": cadre, "contour": contour,
             "fond": _fond_carte(),
             "facteur": 24.0, "n_radar": sum(1 for i in images if i.get("type") == "radar")}
@@ -96,7 +123,7 @@ def prevision_grille(cadre, heures: int = 96) -> list:
     """Champs de pluie prevue sur le bassin, a la maille de la vignette.
 
     Preleve la prevision AROME/ARPEGE sur la meme grille que la vignette radar
-    — 32 x 32 points, soit 875 m — et l'encode a l'identique, pour que
+    — 24 x 24 points, soit 1,2 km — et l'encode a l'identique, pour que
     l'animation enchaine le passe mesure et l'avenir prevu dans la meme unite :
     l'intensite en millimetres par heure. Le prelevement se fait par lots :
     l'URL sature au-dela de quelques centaines de coordonnees, et le quota par
@@ -108,11 +135,15 @@ def prevision_grille(cadre, heures: int = 96) -> list:
     lons = np.linspace(cadre["lon0"], cadre["lon1"], n)
     lats = np.linspace(cadre["lat1"], cadre["lat0"], n)   # du nord au sud, comme l'image
     LO, LA = np.meshgrid(lons, lats)
-    # L'URL sature au-dela d'environ 400 coordonnees : on preleve par lots.
+    # Open-Meteo compte UN APPEL PAR POINT : un champ de mille points depasse
+    # d'un coup la limite de six cents appels par minute. On preleve donc par
+    # lots espaces, sous le plafond, plutot que de se faire refuser en bloc.
     lat_p, lon_p = LA.ravel(), LO.ravel()
     lot = []
-    for d in range(0, len(lat_p), 256):
-        tranche = slice(d, d + 256)
+    for d in range(0, len(lat_p), TAILLE_LOT):
+        if d:
+            time.sleep(PAUSE_LOT)
+        tranche = slice(d, d + TAILLE_LOT)
         rep = None
         for essai in range(3):
             try:
