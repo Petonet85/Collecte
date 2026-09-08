@@ -1,0 +1,294 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>Prévision de crue à Rochereau</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@400;500;600&family=Barlow:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+:root{
+  --papier:#f4f2ec; --carte:#eae6dc; --encre:#1b1f23; --sourdine:#6f7a80; --trait:#d6d1c5;
+  --eau:#2f6f92; --radar:#1d5a7a; --analyse:#8fb0c4; --prev:#5f93b3;
+  --med:#1b4f6b; --b1:rgba(47,111,146,.34); --b2:rgba(47,111,146,.20); --b3:rgba(47,111,146,.10);
+  --seuil:#b8442a; --seuil2:#8a6410; --obs:#14181c;
+  --ok:#3f6b3a; --alerte:#b8442a;
+  --mono:"IBM Plex Mono",ui-monospace,Menlo,monospace;
+  --titre:"Barlow Condensed","Barlow",system-ui,sans-serif;
+  --texte:"Barlow",system-ui,-apple-system,sans-serif;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --papier:#12161a; --carte:#1a1f25; --encre:#e7ebee; --sourdine:#8e9aa2; --trait:#2b3138;
+  --eau:#5b9cc0; --radar:#7fbede; --analyse:#3f6076; --prev:#4f8bab;
+  --med:#7fbede; --b1:rgba(91,156,192,.36); --b2:rgba(91,156,192,.22); --b3:rgba(91,156,192,.11);
+  --seuil:#e0674a; --seuil2:#d5a54a; --obs:#f0f3f6; --ok:#7fb05a; --alerte:#e0674a;
+}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--papier);color:var(--encre);font-family:var(--texte);font-size:15px;line-height:1.55}
+.feuille{max-width:1180px;margin:0 auto;padding:24px 18px 56px}
+header{display:flex;flex-wrap:wrap;align-items:flex-end;justify-content:space-between;gap:16px;
+  border-bottom:2px solid var(--encre);padding-bottom:12px;margin-bottom:18px}
+h1{font-family:var(--titre);font-size:32px;font-weight:600;margin:0;line-height:1.05;text-wrap:balance}
+h1 small{display:block;font-family:var(--titre);font-size:14px;font-weight:400;letter-spacing:.13em;
+  text-transform:uppercase;color:var(--sourdine);margin-top:5px}
+.etat{font-family:var(--titre);font-size:19px;text-align:right;line-height:1.2}
+.etat .quand{font-family:var(--texte);font-size:12.5px;color:var(--sourdine);letter-spacing:0;text-transform:none}
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(196px,1fr));gap:11px;margin-bottom:18px}
+.kpi{border:1px solid var(--trait);background:var(--carte);padding:11px 13px}
+.kpi .lab{font-family:var(--titre);font-size:11.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--sourdine)}
+.kpi .val{font-family:var(--mono);font-size:24px;font-variant-numeric:tabular-nums;margin-top:2px;line-height:1.15}
+.kpi .sub{font-size:12.5px;color:var(--sourdine);margin-top:2px}
+.panneau{border:1px solid var(--trait);background:var(--carte);padding:15px 17px;margin-bottom:18px}
+h2{font-family:var(--titre);font-size:12.5px;letter-spacing:.12em;text-transform:uppercase;
+  color:var(--sourdine);margin:0 0 11px;font-weight:600}
+canvas{display:block;width:100%;height:auto}
+.legende{display:flex;flex-wrap:wrap;gap:13px;font-size:12.5px;color:var(--sourdine);margin-top:10px;align-items:center}
+.legende span{display:inline-flex;align-items:center;gap:6px}
+.sw{width:14px;height:3px;display:block}
+.sw.carre{height:10px;width:10px}
+table{width:100%;border-collapse:collapse;font-size:13.5px;font-variant-numeric:tabular-nums}
+th,td{text-align:right;padding:6px 8px;border-bottom:1px solid var(--trait)}
+th:first-child,td:first-child{text-align:left}
+th{font-family:var(--titre);font-size:11.5px;letter-spacing:.09em;text-transform:uppercase;color:var(--sourdine);font-weight:600}
+tbody tr:last-child td{border-bottom:0}
+tr.repere td{color:var(--seuil)}
+.grille2{display:grid;gap:18px;grid-template-columns:1fr}
+@media(min-width:880px){.grille2{grid-template-columns:1.35fr 1fr}}
+.grille2>*{min-width:0}
+.note{font-size:12.5px;color:var(--sourdine);line-height:1.55}
+.dedans{color:var(--alerte);font-weight:600}
+.scroll{overflow-x:auto}
+footer{margin-top:26px;padding-top:14px;border-top:1px solid var(--trait);font-size:12px;color:var(--sourdine)}
+a{color:var(--eau)}
+.tt{position:fixed;pointer-events:none;background:var(--carte);border:1px solid var(--trait);
+  padding:8px 11px;font-size:12.5px;box-shadow:0 6px 18px rgba(0,0,0,.16);opacity:0;transition:opacity .1s;
+  z-index:9;font-variant-numeric:tabular-nums;white-space:nowrap}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+</head>
+<body>
+<div class="feuille">
+<header>
+  <h1 id="titre">Prévision de crue<small id="sous">—</small></h1>
+  <div class="etat"><div id="etat">—</div><div class="quand" id="quand"></div></div>
+</header>
+
+<div class="kpis" id="kpis"></div>
+
+<div class="panneau">
+  <h2>Pluie sur le bassin et niveau d'eau à Rochereau</h2>
+  <canvas id="graphe" height="520"></canvas>
+  <div class="legende">
+    <span><i class="sw carre" style="background:var(--radar)"></i>pluie radar mesurée</span>
+    <span><i class="sw carre" style="background:var(--analyse)"></i>analyse Météo-France</span>
+    <span><i class="sw carre" style="background:var(--prev)"></i>pluie prévue (médiane, contour p90)</span>
+    <span><i class="sw" style="background:var(--obs)"></i>niveau observé</span>
+    <span><i class="sw" style="background:var(--med)"></i>niveau prévu (médiane)</span>
+    <span><i class="sw carre" style="background:var(--b1)"></i>50 / 80 / 90 % des scénarios</span>
+    <span><i class="sw" style="background:var(--seuil)"></i>porte de la maison</span>
+    <span><i class="sw" style="background:var(--seuil2)"></i>atelier</span>
+  </div>
+</div>
+
+<div class="grille2">
+  <div class="panneau">
+    <h2>Crues de référence, en marge sur vos seuils</h2>
+    <div class="scroll"><table id="scenarios"></table></div>
+    <p class="note" id="note-scen"></p>
+  </div>
+  <div class="panneau">
+    <h2>Bilan pluviométrique</h2>
+    <div class="scroll"><table id="pluie"></table></div>
+    <p class="note" id="note-pluie"></p>
+  </div>
+</div>
+
+<footer id="pied"></footer>
+</div>
+<div class="tt" id="tt"></div>
+
+<script>
+const D = __DATA__;
+const $ = s => document.querySelector(s);
+const fmt=(v,d=2)=>v==null||!isFinite(v)?"—":Number(v).toLocaleString("fr-FR",{minimumFractionDigits:d,maximumFractionDigits:d});
+const cm=(v)=>(v>=0?"+":"−")+Math.abs(Math.round(v*100))+" cm";
+const css=n=>getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const dt=s=>new Date(String(s).replace(" ","T").replace(/Z?$/,"Z"));
+const fdate=d=>d instanceof Date&&!isNaN(d)
+  ? d.toLocaleString("fr-FR",{weekday:"short",day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit",timeZone:"UTC"})+" UTC" : "—";
+
+const SEUILS=D.seuils, PORTE=SEUILS[0].cote, ATELIER=SEUILS[1].cote;
+const tObs=D.observe.time.map(dt), zObs=D.observe.z_rochereau;
+const tPrev=D.prevision.time.map(dt), Zq=D.prevision.z_rochereau;
+const t0=dt(D.meta.date_prevision);
+const pic=Math.max(...Zq["50"]), picH=Math.max(...Zq["90"]);
+const iPic=Zq["50"].indexOf(pic);
+
+/* ------------------------------------------------------------------ graphe */
+function tracer(){
+  const cv=$("#graphe"), dpr=devicePixelRatio||1;
+  const W=cv.parentElement.clientWidth-2, H=520;
+  cv.width=W*dpr; cv.height=H*dpr; cv.style.width=W+"px"; cv.style.height=H+"px";
+  const c=cv.getContext("2d"); c.setTransform(dpr,0,0,dpr,0,0); c.clearRect(0,0,W,H);
+
+  const L=58,R=14,T=12,B=30, hPluie=126, gap=14;
+  const yH=T+hPluie+gap, yB=H-B, hH=yB-yH;
+  const x0=new Date(t0.getTime()-5*864e5), x1=tPrev[tPrev.length-1];
+  const X=d=>L+(d-x0)/(x1-x0)*(W-L-R);
+
+  /* --- pluie, axe inverse en haut */
+  const rad=D.pluie.radar, ana=D.pluie.analyse, pv=D.pluie.prevue;
+  const toutes=[...(rad.mm||[]),...(ana.mm||[]),...(pv?pv.p90:[])].filter(v=>v!=null&&isFinite(v));
+  const pmax=Math.max(0.8,...toutes);
+  const RY=v=>T+hPluie-(v/pmax)*hPluie;
+  const bw=Math.max(1.6,(W-L-R)/((x1-x0)/36e5)*0.86);
+  const barre=(t,v,couleur,alpha)=>{ if(v==null||!(v>0))return;
+    c.globalAlpha=alpha; c.fillStyle=couleur;
+    c.fillRect(X(t)-bw/2,RY(v),bw,T+hPluie-RY(v)); c.globalAlpha=1; };
+  ana.time.forEach((s,i)=>barre(dt(s),ana.mm[i],css("--analyse"),.85));
+  if(pv){ pv.time.forEach((s,i)=>barre(dt(s),pv.p90[i],css("--prev"),.34));
+          pv.time.forEach((s,i)=>barre(dt(s),pv.p50[i],css("--prev"),.95)); }
+  rad.time.forEach((s,i)=>barre(dt(s),rad.mm[i],css("--radar"),1));
+  c.strokeStyle=css("--trait"); c.lineWidth=1;
+  c.beginPath(); c.moveTo(L,T+hPluie+.5); c.lineTo(W-R,T+hPluie+.5); c.stroke();
+  c.fillStyle=css("--sourdine"); c.font="10px "+css("--mono"); c.textAlign="right";
+  c.fillText(fmt(pmax,1)+" mm/h",L-6,T+10); c.fillText("0",L-6,T+hPluie);
+
+  /* --- niveau */
+  let vals=[...zObs,...Zq["5"],...Zq["95"],PORTE,ATELIER].filter(v=>v!=null&&isFinite(v));
+  let lo=Math.min(...vals),hi=Math.max(...vals);
+  const pad=Math.max((hi-lo)*.12,.15); lo-=pad; hi+=pad;
+  const Y=v=>yB-(v-lo)/(hi-lo)*hH;
+
+  c.strokeStyle=css("--trait"); c.fillStyle=css("--sourdine"); c.font="11px system-ui";
+  const pas=[0.1,0.25,0.5,1,2].find(p=>(hi-lo)/p<=7)||2;
+  for(let v=Math.ceil(lo/pas)*pas;v<=hi;v+=pas){ const y=Y(v);
+    if(y<yH||y>yB)continue;
+    c.globalAlpha=.5;c.beginPath();c.moveTo(L,y+.5);c.lineTo(W-R,y+.5);c.stroke();c.globalAlpha=1;
+    c.textAlign="right"; c.fillText(fmt(v,2),L-7,y+4); }
+  c.save(); c.translate(13,(yH+yB)/2); c.rotate(-Math.PI/2); c.textAlign="center";
+  c.fillText("Cote à Rochereau (m NGF)",0,0); c.restore();
+
+  const jours=[]; for(let d=new Date(x0); d<=x1; d.setUTCHours(0,0,0,0),d.setUTCDate(d.getUTCDate()+1)) jours.push(new Date(d));
+  jours.forEach(d=>{ const x=X(d); if(x<L)return;
+    c.globalAlpha=.4;c.beginPath();c.moveTo(x+.5,T);c.lineTo(x+.5,yB);c.stroke();c.globalAlpha=1;
+    c.textAlign="center"; c.fillStyle=css("--sourdine");
+    c.fillText(d.toLocaleDateString("fr-FR",{weekday:"short",day:"2-digit",timeZone:"UTC"}),x,yB+16); });
+
+  /* --- faisceau */
+  [["5","95",css("--b3")],["10","90",css("--b2")],["25","75",css("--b1")]].forEach(([a,b,col])=>{
+    c.fillStyle=col; c.beginPath();
+    Zq[a].forEach((v,i)=>{const x=X(tPrev[i]),y=Y(v); i?c.lineTo(x,y):c.moveTo(x,y);});
+    for(let i=Zq[b].length-1;i>=0;i--) c.lineTo(X(tPrev[i]),Y(Zq[b][i]));
+    c.closePath(); c.fill(); });
+
+  /* --- seuils de la propriete */
+  SEUILS.forEach((s,k)=>{ const y=Y(s.cote); if(y<yH||y>yB)return;
+    c.strokeStyle=k?css("--seuil2"):css("--seuil"); c.lineWidth=k?1.2:1.7; c.setLineDash(k?[5,4]:[]);
+    c.beginPath(); c.moveTo(L,y+.5); c.lineTo(W-R,y+.5); c.stroke(); c.setLineDash([]);
+    c.fillStyle=c.strokeStyle; c.textAlign="left"; c.font="600 11px "+css("--titre");
+    c.fillText(s.nom.toUpperCase(),L+6,y-5); });
+
+  /* --- courbes */
+  const ligne=(xs,ys,col,w,dash)=>{ c.strokeStyle=col;c.lineWidth=w;c.setLineDash(dash||[]);
+    c.beginPath(); let on=false;
+    ys.forEach((v,i)=>{ if(v==null||!isFinite(v)){on=false;return;} const x=X(xs[i]),y=Y(v);
+      on?c.lineTo(x,y):c.moveTo(x,y); on=true; });
+    c.stroke(); c.setLineDash([]); };
+  ligne(tObs,zObs,css("--obs"),1.9);
+  ligne(tPrev,Zq["50"],css("--med"),2.2);
+
+  c.strokeStyle=css("--sourdine"); c.setLineDash([3,3]); c.lineWidth=1;
+  c.beginPath(); c.moveTo(X(t0)+.5,T); c.lineTo(X(t0)+.5,yB); c.stroke(); c.setLineDash([]);
+  c.fillStyle=css("--sourdine"); c.font="10px "+css("--mono"); c.textAlign="left";
+  c.fillText("maintenant",X(t0)+5,yH+11);
+  window._g={X,Y,L,R,W,x0,x1,yH,yB};
+}
+
+/* ------------------------------------------------------------------ texte */
+function entete(){
+  $("#titre").firstChild.textContent="Prévision de crue";
+  $("#sous").textContent=D.meta.lieu+" · "+D.meta.riviere;
+  const touche=SEUILS.filter(s=>picH>=s.cote);
+  $("#etat").innerHTML=touche.length
+    ? `<span class="dedans">Eau attendue jusqu'à ${touche.map(s=>s.nom.toLowerCase()).join(" et ")}</span>`
+    : "Aucun seuil atteint";
+  $("#quand").textContent="Calculée le "+fdate(dt(D.meta.genere_le))+" · échéance "+D.meta.horizon_h+" h";
+  document.title=(touche.length?"⚠ ":"")+"Prévision de crue à Rochereau";
+}
+function kpis(){
+  const zNow=zObs[zObs.length-1];
+  const p=D.pluie.cumuls;
+  $("#kpis").innerHTML=[
+    ["Niveau actuel",fmt(zNow)+" m",`porte ${cm(zNow-PORTE)} · atelier ${cm(zNow-ATELIER)}`],
+    ["Pic prévu",fmt(pic)+" m",`${fdate(tPrev[iPic])} · porte ${cm(pic-PORTE)}`],
+    ["Scénario haut",fmt(picH)+" m",`porte ${cm(picH-PORTE)} — 1 chance sur 10 de dépasser`],
+    ["Pluie mesurée",(p.radar_mesure_mm==null?"—":fmt(p.radar_mesure_mm,1)+" mm"),
+      `radar, ${p.radar_heures} h archivées · analyse 48 h ${fmt(p.analyse_48h_mm,1)} mm`],
+    ["Pluie prévue",(p.prevu_median_mm==null?"—":fmt(p.prevu_median_mm,1)+" mm"),
+      `scénario haut ${fmt(p.prevu_p90_mm,1)} mm sur 4 jours`],
+  ].map(([l,v,s])=>`<div class="kpi"><div class="lab">${l}</div><div class="val">${v}</div><div class="sub">${s}</div></div>`).join("");
+}
+function scenarios(){
+  const tous=[...D.reperes.map(s=>({...s,mesure:true})),...D.scenarios]
+    .sort((a,b)=>a.z-b.z);
+  $("#scenarios").innerHTML=`<thead><tr><th>Crue</th><th>Cote</th><th>Porte</th><th>Atelier</th></tr></thead><tbody>`
+    +tous.map(s=>`<tr class="${s.mesure?"repere":""}"><td>${s.nom}${s.mesure?" ✓":""}</td>
+      <td>${fmt(s.z)} m</td><td>${cm(s.z-PORTE)}</td><td>${cm(s.z-ATELIER)}</td></tr>`).join("")+`</tbody>`;
+  $("#note-scen").innerHTML=`✓ = relevé sur le terrain. Les autres sont calculés depuis le bief calé sur ces relevés. `
+    +`Votre porte est franchie en moyenne tous les <b>${fmt(D.periodes_retour.maison,1)} ans</b>, l'atelier tous les `
+    +`<b>${fmt(D.periodes_retour.atelier,1)} ans</b>. Marges à lire à la dizaine de centimètres : l'incertitude est de ±13 cm. `
+    +`<a href="carte.html">Voir l'emprise sur la carte →</a>`;
+}
+function bilanPluie(){
+  const p=D.pluie.cumuls, pv=D.pluie.prevue;
+  const par24=[];
+  if(pv){ const t=pv.time.map(dt);
+    for(let j=0;j<4;j++){ let s5=0,s9=0,n=0;
+      t.forEach((d,i)=>{ const h=(d-t0)/36e5; if(h>j*24&&h<=(j+1)*24){s5+=pv.p50[i];s9+=pv.p90[i];n++;} });
+      if(n) par24.push([`J+${j+1}`,s5,s9]); } }
+  $("#pluie").innerHTML=`<thead><tr><th>Période</th><th>Médiane</th><th>Scénario haut</th></tr></thead><tbody>`
+    +`<tr><td>48 h écoulées (analyse)</td><td>${fmt(p.analyse_48h_mm,1)} mm</td><td>—</td></tr>`
+    +`<tr class="repere"><td>dont radar mesuré (${p.radar_heures} h)</td><td>${p.radar_mesure_mm==null?"—":fmt(p.radar_mesure_mm,1)+" mm"}</td><td>—</td></tr>`
+    +par24.map(([l,a,b])=>`<tr><td>${l}</td><td>${fmt(a,1)} mm</td><td>${fmt(b,1)} mm</td></tr>`).join("")
+    +`</tbody>`;
+  $("#note-pluie").innerHTML=`La lame d'eau <b>radar</b> est mesurée sur l'emprise du bassin toutes les 5 minutes `
+    +`et archivée par ce dépôt : elle ne remonte qu'au démarrage de l'archivage. Au-delà, l'<b>analyse</b> `
+    +`Météo-France prend le relais — c'est un modèle, pas une mesure. La prévision vient d'un ensemble de `
+    +`111 scénarios (ICON-D2, ICON-EU, ECMWF).`;
+}
+function pied(){
+  $("#pied").innerHTML=`Hub'Eau (hydrométrie, piézométrie) · Météo-France, API Données Radar et modèles AROME/ARPEGE `
+    +`· IGN RGE ALTI et LiDAR HD · Vigicrues. Cotes en m NGF IGN 69. `
+    +`Chaîne recalculée toutes les 6 h — <a href="https://github.com/Petonet85/Collecte">code et données</a>. `
+    +`<b>Outil personnel expérimental : il ne remplace pas la vigilance officielle Vigicrues.</b>`;
+}
+/* ------------------------------------------------------------------ survol */
+$("#graphe").addEventListener("mousemove",e=>{
+  const g=window._g; if(!g)return;
+  const r=e.target.getBoundingClientRect(), px=e.clientX-r.left;
+  const tt=$("#tt");
+  if(px<g.L||px>g.W-g.R){tt.style.opacity=0;return;}
+  const d=new Date(+g.x0+(px-g.L)/(g.W-g.L-g.R)*(g.x1-g.x0));
+  const proche=(arr,x)=>{let b=0,bd=Infinity;arr.forEach((v,i)=>{const k=Math.abs(v-x);if(k<bd){bd=k;b=i;}});return b;};
+  let html;
+  if(d<=t0){ const i=proche(tObs,d);
+    html=`<b>${fdate(tObs[i])}</b><br>observé ${fmt(zObs[i])} m<br>porte ${cm(zObs[i]-PORTE)}`;
+  } else { const i=proche(tPrev,d);
+    html=`<b>${fdate(tPrev[i])}</b> · +${Math.round((tPrev[i]-t0)/36e5)} h<br>`
+      +`médiane <b>${fmt(Zq["50"][i])} m</b> — porte ${cm(Zq["50"][i]-PORTE)}<br>`
+      +`80 % : ${fmt(Zq["10"][i])} – ${fmt(Zq["90"][i])} m`; }
+  tt.innerHTML=html; tt.style.opacity=1;
+  tt.style.left=Math.min(e.clientX+14,innerWidth-200)+"px"; tt.style.top=(e.clientY-10)+"px";
+});
+$("#graphe").addEventListener("mouseleave",()=>$("#tt").style.opacity=0);
+
+function rendre(){ entete(); kpis(); scenarios(); bilanPluie(); pied(); tracer(); }
+addEventListener("resize",tracer);
+matchMedia("(prefers-color-scheme:dark)").addEventListener("change",rendre);
+rendre();
+</script>
+</body>
+</html>

@@ -44,6 +44,22 @@ def construire(horizon_h=72, verbose=True):
     return prevision
 
 
+def ecrire_tableau(prevision, horizon_h=72):
+    """Tableau de bord : hydrogramme, seuils de la propriete, pluie du bassin."""
+    import donnees_tableau
+
+    donnees = donnees_tableau.assembler(prevision, horizon_h)
+    with open(os.path.join(SITE, "gabarit_tableau.html"), encoding="utf-8") as fh:
+        page = fh.read()
+    page = page.replace("__DATA__", json.dumps(donnees, ensure_ascii=False, separators=(",", ":")))
+    chemin = os.path.join(SITE, "index.html")
+    with open(chemin, "w", encoding="utf-8") as fh:
+        fh.write(page)
+    with open(os.path.join(SITE, "tableau.json"), "w", encoding="utf-8") as fh:
+        json.dump(donnees, fh, ensure_ascii=False)
+    return chemin
+
+
 def ecrire_page(prevision):
     with open(os.path.join(SITE, "gabarit.html"), encoding="utf-8") as fh:
         page = fh.read()
@@ -55,7 +71,7 @@ def ecrire_page(prevision):
 
     page = page.replace("__DATA__", json.dumps(carte, ensure_ascii=False, separators=(",", ":")))
     page = page.replace("__CALAGE__", json.dumps(calage, ensure_ascii=False, separators=(",", ":")))
-    chemin = os.path.join(SITE, "index.html")
+    chemin = os.path.join(SITE, "carte.html")
     with open(chemin, "w", encoding="utf-8") as fh:
         fh.write(page)
     with open(os.path.join(SITE, "prevision.json"), "w", encoding="utf-8") as fh:
@@ -78,13 +94,14 @@ def main(argv=None):
     args = p.parse_args(argv)
 
     prevision = construire(args.horizon, verbose=not args.silencieux)
-    chemin = ecrire_page(prevision)
+    carte = ecrire_page(prevision)
+    chemin = ecrire_tableau(prevision, args.horizon)
 
     z = prevision["z_rochereau"]["50"]
     haut = prevision["z_rochereau"]["90"]
     pic, pic90 = max(z), max(haut)
     seuils = json.load(open(os.path.join(SITE, "seuils.json"), encoding="utf-8"))
-    print(f"\n  page ecrite : {chemin}")
+    print(f"\n  tableau de bord : {chemin}\n  carte : {carte}")
     print(f"  pic median {pic:.2f} m NGF (scenario haut {pic90:.2f})")
     for nom, cote in (("porte de la maison", seuils["maison"]), ("atelier", seuils["atelier"])):
         print(f"    {nom:<20} {100 * (pic - cote):+6.0f} cm   "
