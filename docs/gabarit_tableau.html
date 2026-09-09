@@ -491,7 +491,16 @@ function stations(){
     +`chaque station, construite sur ses propres couples publiés — fidèle au centimètre en `
     +`basses eaux, plus lâche en crue où la relation dépend de l'événement. Chaque bande garde `
     +`son échelle verticale — ce sont des rivières de tailles différentes. `
-    +`Trait noir : observé. Trait bleu et bandes : médiane prévue et incertitude à 50, 80 et 90 %.`;
+    +`<br><br><b>Deux horizons, deux précisions.</b> Sur les premières heures — la durée du `
+    +`temps de propagation — l'eau qui arrivera est déjà passée devant les stations amont : `
+    +`elle est <b>mesurée</b>, et le rejeu des crues passées donne alors l'heure du pic à `
+    +`<b>±1,5 h</b> près. Au-delà, tout dépend du modèle pluie-débit, dont le calage horaire `
+    +`sur 17 ans et 16 crues indépendantes situe le pic à <b>±3 h en médiane mais avec des `
+    +`écarts allant jusqu'à un jour</b>, et son amplitude à 22 % près. Cette limite ne vient `
+    +`pas du réglage : aucun jeu de paramètres testé ne descend sous ce seuil. Lisez donc le `
+    +`début de la courbe comme une observation qui se déplace, et la suite comme une `
+    +`tendance.`
+    +`<br><br>Trait noir : observé. Trait bleu et bandes : médiane prévue et incertitude à 50, 80 et 90 %.`;
 
 }
 function rendre(){ entete(); kpis(); stations(); scenarios(); bilanPluie(); pied(); tracer(); }

@@ -56,6 +56,22 @@ class Context:
 # --------------------------------------------------------------------------- #
 
 
+def _params_horaires_cales(code: str, defaut: gr.GRParams, log) -> gr.GRParams:
+    chemin = os.path.join(os.path.dirname(DATA_DIR), "data", f"calage_horaire_{code}.json")
+    if not os.path.exists(chemin):
+        chemin = os.path.join(DATA_DIR, f"calage_horaire_{code}.json")
+    try:
+        with open(chemin, encoding="utf-8") as fh:
+            c = json.load(fh)
+        p = gr.GRParams.from_array(c["params_hour"])
+        v = c.get("validation_apres", {})
+        log(f"parametres horaires cales sur les pointes : KGE {v.get('KGE')}, "
+            f"biais pic {v.get('biais_pic_pct')} %, etiage x{v.get('sim_sur_obs_etiage')}")
+        return p
+    except (OSError, ValueError, KeyError):
+        return defaut
+
+
 def build_context(code: str, years: int = CALIB_YEARS, force: bool = False,
                   iters: int = 1200, verbose: bool = True) -> Context:
     def log(msg):
@@ -84,6 +100,12 @@ def build_context(code: str, years: int = CALIB_YEARS, force: bool = False,
     if cached:
         p_day = gr.GRParams.from_array(cached["params_day"])
         p_hour = gr.GRParams.from_array(cached["params_hour"])
+        # Parametres horaires reellement cales, s'ils existent. Ils priment sur
+        # ceux du cache, qui sont DERIVES des journaliers par une regle empirique
+        # faute de chronique horaire au moment ou ce cache a ete ecrit. Voir
+        # caler_horaire.py : le calage direct ramene le biais d'etiage de x2,2 a
+        # x1,6 et le KGE horaire de 0,54 a 0,70 en validation independante.
+        p_hour = _params_horaires_cales(b.code_station, p_hour, log)
         scores = cached["calib"]
         log(f"parametres relus du cache : {p_day.to_dict()}")
         if "forcage_operationnel" not in scores:

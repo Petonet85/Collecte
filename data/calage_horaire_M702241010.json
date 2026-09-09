@@ -1,0 +1,33 @@
+{
+ "params_hour": [
+  165.0691551144656,
+  0.11182506664076312,
+  19.999999999999996,
+  18.24474147845274,
+  1.0286994823890823
+ ],
+ "objectif_calage": 0.5762,
+ "validation_avant": {
+  "KGE": 0.544,
+  "n_pointes": 16,
+  "biais_pic_pct": -13.9,
+  "abs_median_pct": 22.3,
+  "rmse_relatif_pct": 30.0,
+  "decalage_median_h": -3.0,
+  "part_dans_3h_pct": 25.0,
+  "sim_sur_obs_etiage": 2.19
+ },
+ "validation_apres": {
+  "KGE": 0.695,
+  "n_pointes": 16,
+  "biais_pic_pct": -13.8,
+  "abs_median_pct": 21.6,
+  "rmse_relatif_pct": 31.7,
+  "decalage_median_h": -3.0,
+  "part_dans_3h_pct": 31.0,
+  "sim_sur_obs_etiage": 1.64
+ },
+ "periode_calage": "2010-2020",
+ "periode_validation": "2021-2026",
+ "source": "HydroPortail (debit horaire) + ERA5 (pluie horaire)"
+}
