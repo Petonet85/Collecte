@@ -1,0 +1,19 @@
+{
+ "forme": "rho(h) = exp(-h/tau)",
+ "tau_h": 37.52,
+ "mesure": "autocorrelation du residu de transfert, moyenne ponderee sur les episodes",
+ "rho_observe": {
+  "0": 1.0,
+  "1": 0.971,
+  "2": 0.926,
+  "3": 0.876,
+  "6": 0.725,
+  "9": 0.587,
+  "12": 0.471,
+  "18": 0.342,
+  "24": 0.295,
+  "36": 0.258,
+  "48": 0.217,
+  "72": 0.151
+ }
+}

@@ -359,23 +359,55 @@ def incertitude_transfert() -> dict:
         return {"a": 4.36, "b": 5.73, "sigma_mini_cm": 1.0}
 
 
-def _bruiter_transfert(h_membres, tirage, calage):
+def persistance_transfert() -> dict:
+    """Autocorrelation mesuree du residu de transfert, selon l'echeance."""
+    chemin = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                          "data", "calage_persistance_transfert.json")
+    try:
+        with open(chemin, encoding="utf-8") as fh:
+            return json.load(fh)
+    except (OSError, ValueError):
+        return {"rho_observe": {"0": 1.0, "1": 0.971, "3": 0.876, "6": 0.725,
+                                "12": 0.471, "24": 0.295, "48": 0.217, "72": 0.151}}
+
+
+def _rho(heures, persistance):
+    """rho aux echeances demandees, interpole sur la table mesuree.
+
+    Table plutot que loi exponentielle : le residu decroit vite les premieres
+    heures puis se stabilise autour d'un biais durable, et une exponentielle
+    unique se trompe du simple au double a mi-echeance (0,73 au lieu de 0,47 a
+    douze heures).
+    """
+    t = persistance.get("rho_observe") or {}
+    x = np.array(sorted(float(k) for k in t))
+    y = np.array([t[str(int(k)) if float(k).is_integer() else str(k)] for k in x])
+    return np.interp(np.asarray(heures, dtype=float), x, y, left=1.0, right=float(y[-1]))
+
+
+def _bruiter_transfert(h_membres, tirage, calage, heures, persistance):
     """Ajoute l'erreur de la relation de transfert, une par membre.
 
-    Une seule realisation par trajectoire, tenue sur toute l'echeance, et non un
-    bruit blanc a chaque pas : la mesure montre que cette erreur est une
-    propriete de l'episode — la pluie tombe-t-elle plutot sur la partie jaugee
-    du bassin ou sur les 156 km² intermediaires — et non une agitation qui se
-    compenserait d'une heure a l'autre. Un bruit blanc ferait vibrer la courbe
-    sans elargir le faisceau la ou il faut.
+    Une seule realisation par trajectoire et non un bruit blanc a chaque pas :
+    la mesure montre que cette erreur est une propriete de l'episode — la pluie
+    tombe-t-elle plutot sur la partie jaugee du bassin ou sur les 217 km²
+    intermediaires — et non une agitation qui se compenserait d'une heure a
+    l'autre.
 
-    Sans ce terme le faisceau etait nul sur toute la duree du retard, la ou le
-    debit amont est mesure : il annoncait une certitude que la conversion en
-    hauteur ne permet pas.
+    Mais elle ne s'applique pas d'emblee a pleine amplitude. Une partie en est
+    deja connue : la hauteur d'aujourd'hui est mesuree, donc l'ecart actuel
+    entre la relation et la realite est visible, et l'ancrage de la prevision
+    sur la derniere observation l'emporte avec lui. Ce qui reste incertain a
+    l'echeance h, c'est seulement la part que la persistance du residu ne
+    transmet pas, soit sqrt(1 - rho(h)²) — 23 % de sigma a une heure, 69 % a
+    douze, 96 % a deux jours. Sans cette ponderation le faisceau s'ouvrait a
+    pleine largeur des la premiere heure, alors qu'a une heure on sait
+    tres bien ou en est la riviere.
     """
     sigma = np.maximum(calage["a"] + calage["b"] * h_membres,
                        calage.get("sigma_mini_cm", 1.0)) / 100.0
-    return np.maximum(h_membres + tirage * sigma, 0.0)
+    part = np.sqrt(np.clip(1.0 - _rho(heures, persistance) ** 2, 0.0, 1.0))
+    return np.maximum(h_membres + tirage * sigma * part, 0.0)
 
 
 def prevoir(horizon_h: int = 72, verbose: bool = True) -> dict:
@@ -445,8 +477,10 @@ def prevoir(horizon_h: int = 72, verbose: bool = True) -> dict:
     # fixe pour que deux calculs successifs ne fassent pas respirer la bande
     # sans raison.
     inc = incertitude_transfert()
+    persist = persistance_transfert()
+    heures = np.arange(1, trajectoires.shape[1] + 1, dtype=float)
     tirage = np.random.default_rng(20260909).standard_normal(trajectoires.shape[0])[:, None]
-    h_membres = _bruiter_transfert(courbe.to_h(trajectoires), tirage, inc)
+    h_membres = _bruiter_transfert(courbe.to_h(trajectoires), tirage, inc, heures, persist)
     quantiles_h = {p: np.percentile(h_membres, p, axis=0) for p in (5, 10, 25, 50, 75, 90, 95)}
     log(f"incertitude de transfert ajoutee : ± {inc['a'] + inc['b'] * float(np.median(h_membres)):.0f} cm "
         f"a la cote actuelle, ± {inc['a'] + inc['b'] * 2.6:.0f} cm pour une crue a 2,60 m")
@@ -456,7 +490,7 @@ def prevoir(horizon_h: int = 72, verbose: bool = True) -> dict:
     c_ro = calage["saint_laurent_vers_rochereau"]
     traj_roch = translater(trajectoires, None, t0, tau_roch, lissage_h=lissage)
     # Meme tirage : c'est la meme relation et le meme episode.
-    h_roch = _bruiter_transfert(courbe.to_h(traj_roch), tirage, inc)
+    h_roch = _bruiter_transfert(courbe.to_h(traj_roch), tirage, inc, heures, persist)
     quantiles_h_roch = {p: np.percentile(h_roch, p, axis=0) for p in (5, 10, 25, 50, 75, 90, 95)}
     log(f"propagation Saint-Laurent → Rochereau : {tau_roch:.1f} h "
         f"({c_ro['distance_km']} km a {c_ro['celerite_ms']:.2f} m/s, "
@@ -470,6 +504,7 @@ def prevoir(horizon_h: int = 72, verbose: bool = True) -> dict:
         "rochereau": {k: c_ro[k] for k in ("distance_km", "celerite_ms", "n_crues") if k in c_ro},
         "source": calage.get("source"),
         "incertitude_transfert": inc,
+        "persistance_transfert": persist,
     }
 
     q_plancher = diag_transfert["debit_plancher_m3s"]

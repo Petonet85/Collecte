@@ -114,8 +114,10 @@ def _stations(prevision, h_saint_laurent, q_amont):
         "grandeur": "hauteur", "unite": "m", "decimales": 2, "surface_km2": 576,
         "observe": {"time": [d.isoformat() for d in h_saint_laurent.index], "v": obs_sl},
         "prevu": {"time": prevision["time"],
+                  # 18 h et non 22 : c'est le temps de demi-vie du residu de
+                  # transfert reellement mesure (rho = 0,73 a six heures).
                   "q": raccorder_quantiles(prevision["h_saint_laurent"], dernier(obs_sl),
-                                           horizon_decroissance_h=22.0, plafond=0.5)},
+                                           horizon_decroissance_h=18.0, plafond=0.5)},
     }]
     for code, bloc in (prevision.get("stations") or {}).items():
         obs = bloc["observe"]
