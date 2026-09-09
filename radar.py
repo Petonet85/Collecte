@@ -286,7 +286,7 @@ def lame_bassin(contenu, emprise, surface_km2, cache_masque=None, points=None):
 
         # --- vignette pour l'animation, seulement s'il pleut quelque part
         grille = None
-        if valides.any() and pluie[valides].max() > 0:
+        if ARCHIVER_VIGNETTE and valides.any() and pluie[valides].max() > 0:
             plein = jeu["data"][m["l0"]:m["l1"], m["c0"]:m["c1"]].astype(float)
             plein = np.where(plein == undetect, 0.0,
                              np.where(plein == nodata, np.nan, plein * gain + offset))

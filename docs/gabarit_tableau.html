@@ -7,8 +7,6 @@
 <title>Prévision de crue à Rochereau</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
-<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@400;500;600&family=Barlow:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
 <style>
 :root{
@@ -62,25 +60,17 @@ tr.repere td{color:var(--seuil)}
 .note{font-size:12.5px;color:var(--sourdine);line-height:1.55}
 .dedans{color:var(--alerte);font-weight:600}
 .scroll{overflow-x:auto}
-.anim{position:relative}
-#anim{height:460px;border:1px solid var(--trait);background:var(--carte)}
-#anim .leaflet-control-attribution{font-size:10px;background:rgba(255,255,255,.72)}
-:root:not([data-theme="light"]) #anim .leaflet-control-attribution{background:rgba(20,24,28,.72);color:#aab}
-:root:not([data-theme="light"]) #anim .leaflet-control-attribution a{color:#8bd}
-.anim-legende{position:absolute;right:10px;top:10px;z-index:600;background:var(--carte);
+.stations{display:grid;gap:18px 20px;grid-template-columns:1fr}
+@media(min-width:1000px){.stations{grid-template-columns:repeat(3,1fr)}}
+@media(min-width:640px) and (max-width:999px){.stations{grid-template-columns:1fr}}
+.station{min-width:0}
+.station h3{font-family:var(--titre);font-size:15px;font-weight:600;margin:0 0 1px;letter-spacing:.01em}
+.station .meta{font-size:12px;color:var(--sourdine);margin-bottom:7px}
+.station .val{font-family:var(--mono);font-size:13px;font-variant-numeric:tabular-nums}
   border:1px solid var(--trait);padding:6px 8px;font-family:var(--mono);font-size:9.5px;line-height:1.5}
-.anim-legende i{display:inline-block;width:14px;height:9px;vertical-align:-1px;margin-right:5px}
-.anim-etiq{position:absolute;left:10px;bottom:24px;z-index:600;background:var(--carte);
   border:1px solid var(--trait);padding:6px 9px;font-family:var(--titre);font-size:12px;
   letter-spacing:.05em;text-transform:uppercase;line-height:1.5}
-.anim-etiq b{font-family:var(--mono);letter-spacing:0}
-.anim-cmd{display:flex;align-items:center;gap:11px;margin-top:9px}
-.anim-cmd button{width:34px;height:28px;border:1px solid var(--trait);background:var(--papier);
   color:var(--encre);cursor:pointer;font-size:13px;line-height:1;font-family:var(--mono)}
-.anim-cmd button:hover{border-color:var(--eau);color:var(--eau)}
-.anim-cmd input[type=range]{flex:1;accent-color:var(--eau);min-width:0}
-.anim-t{font-family:var(--mono);font-size:12.5px;font-variant-numeric:tabular-nums;
-  white-space:nowrap;color:var(--sourdine);min-width:132px;text-align:right}
 footer{margin-top:26px;padding-top:14px;border-top:1px solid var(--trait);font-size:12px;color:var(--sourdine)}
 a{color:var(--eau)}
 .tt{position:fixed;pointer-events:none;background:var(--carte);border:1px solid var(--trait);
@@ -113,19 +103,10 @@ a{color:var(--eau)}
   </div>
 </div>
 
-<div class="panneau" id="anim-panneau">
-  <h2>Pluie sur le bassin — 48 h mesurées puis 4 jours prévus</h2>
-  <div class="anim">
-    <div id="anim"></div>
-    <div class="anim-legende" id="anim-legende"></div>
-    <div class="anim-etiq" id="anim-etiq">—</div>
-    <div class="anim-cmd">
-      <button id="jouer" aria-label="Lecture">▶</button>
-      <input id="curseur-anim" type="range" min="0" max="0" value="0" aria-label="Instant">
-      <span class="anim-t" id="anim-t">—</span>
-    </div>
-  </div>
-  <p class="note" id="note-anim"></p>
+<div class="panneau">
+  <h2>Stations qui portent la prévision</h2>
+  <div class="stations" id="stations"></div>
+  <p class="note" id="note-stations"></p>
 </div>
 
 <div class="grille2">
@@ -347,126 +328,72 @@ $("#graphe").addEventListener("mousemove",e=>{
 });
 $("#graphe").addEventListener("mouseleave",()=>$("#tt").style.opacity=0);
 
-/* --------------------------------------------------------------- animation */
-const A=D.animation||{images:[],emprise:null};
-let iAnim=0, jeu=null;
-/* Intensites stockees en racine carree : un octet couvre 0 a 113 mm/h avec
-   une resolution fine dans les faibles valeurs. */
-function decoder(b64,n){
-  if(!b64) return null;
-  const f=A.facteur||24, bin=atob(b64), a=new Float32Array(n*n);
-  for(let k=0;k<Math.min(bin.length,n*n);k++){ const q=bin.charCodeAt(k)/f; a[k]=q*q; }
-  return a;
+/* ---------------------------------------------------------------- stations */
+function tracerStation(cv,st){
+  const dpr=devicePixelRatio||1, W=cv.parentElement.clientWidth, H=200;
+  cv.width=W*dpr; cv.height=H*dpr; cv.style.width=W+"px"; cv.style.height=H+"px";
+  const c=cv.getContext("2d"); c.setTransform(dpr,0,0,dpr,0,0); c.clearRect(0,0,W,H);
+  const L=46,R=8,T=8,B=20, yB=H-B, hH=yB-T;
+  const tO=st.observe.time.map(dt), vO=st.observe.v;
+  const tP=st.prevu.time.map(dt), Q=st.prevu.q;
+  const x0=new Date(t0.getTime()-5*864e5), x1=tP.length?tP[tP.length-1]:t0;
+  const X=d=>L+(d-x0)/(x1-x0)*(W-L-R);
+  let vals=[...vO,...(Q["5"]||[]),...(Q["95"]||[])].filter(v=>v!=null&&isFinite(v));
+  if(!vals.length) return;
+  let lo=Math.min(...vals),hi=Math.max(...vals);
+  const pad=Math.max((hi-lo)*.14,st.decimales>1?.02:.3); lo-=pad; hi+=pad;
+  const Y=v=>yB-(v-lo)/(hi-lo)*hH;
+
+  c.strokeStyle=css("--trait"); c.fillStyle=css("--sourdine"); c.font="10px system-ui";
+  const brut=(hi-lo)/4, mag=Math.pow(10,Math.floor(Math.log10(brut)));
+  const pas=[1,2,2.5,5,10].find(x=>x*mag>=brut)*mag;
+  for(let v=Math.ceil(lo/pas)*pas;v<=hi;v+=pas){ const y=Y(v); if(y<T||y>yB)continue;
+    c.globalAlpha=.5;c.beginPath();c.moveTo(L,y+.5);c.lineTo(W-R,y+.5);c.stroke();c.globalAlpha=1;
+    c.textAlign="right"; c.fillText(fmt(v,st.decimales),L-6,y+3.5); }
+  for(let d=new Date(x0); d<=x1; d.setUTCHours(0,0,0,0),d.setUTCDate(d.getUTCDate()+1)){
+    const x=X(d); if(x<L)continue;
+    c.globalAlpha=.35;c.beginPath();c.moveTo(x+.5,T);c.lineTo(x+.5,yB);c.stroke();c.globalAlpha=1;
+    c.textAlign="center"; c.fillStyle=css("--sourdine");
+    c.fillText(d.toLocaleDateString("fr-FR",{day:"2-digit",month:"2-digit",timeZone:"UTC"}),x,yB+14); }
+
+  [["5","95",css("--b3")],["10","90",css("--b2")],["25","75",css("--b1")]].forEach(([a,b,col])=>{
+    if(!Q[a]||!Q[b]) return;
+    c.fillStyle=col; c.beginPath();
+    Q[a].forEach((v,i)=>{const x=X(tP[i]),y=Y(v); i?c.lineTo(x,y):c.moveTo(x,y);});
+    for(let i=Q[b].length-1;i>=0;i--) c.lineTo(X(tP[i]),Y(Q[b][i]));
+    c.closePath(); c.fill(); });
+  const ligne=(xs,ys,col,w)=>{ c.strokeStyle=col;c.lineWidth=w;c.beginPath(); let on=false;
+    ys.forEach((v,i)=>{ if(v==null||!isFinite(v)){on=false;return;} const x=X(xs[i]),y=Y(v);
+      on?c.lineTo(x,y):c.moveTo(x,y); on=true; }); c.stroke(); };
+  ligne(tO,vO,css("--obs"),1.7);
+  if(Q["50"]) ligne(tP,Q["50"],css("--med"),2);
+  c.strokeStyle=css("--sourdine"); c.setLineDash([3,3]); c.lineWidth=1;
+  c.beginPath(); c.moveTo(X(t0)+.5,T); c.lineTo(X(t0)+.5,yB); c.stroke(); c.setLineDash([]);
 }
-/* Echelle d'intensite en mm/h, dans l'esprit des cartes radar usuelles. */
-const ECHELLE=[[0.1,"#cfe0ea"],[0.5,"#8fbcd8"],[1,"#4a90bd"],[2,"#22648f"],
-               [5,"#28518f"],[10,"#6b3fa0"],[20,"#9b2f6b"],[50,"#b8442a"]];
-function couleurPluie(mmh){
-  if(mmh<0.05) return null;
-  for(const [s,c] of ECHELLE) if(mmh<s) return c;
-  return "#7a1f1f";
+function stations(){
+  const S=D.stations||[];
+  if(!S.length){ $("#stations").innerHTML='<p class="note">Prévision par station indisponible.</p>'; return; }
+  $("#stations").innerHTML=S.map((st,k)=>{
+    const vO=st.observe.v.filter(v=>v!=null&&isFinite(v));
+    const actuel=vO.length?vO[vO.length-1]:null;
+    const med=st.prevu.q["50"]||[];
+    const pic=med.length?Math.max(...med):null;
+    return `<div class="station">
+      <h3>${st.nom}</h3>
+      <div class="meta">${st.surface_km2} km² · ${st.grandeur} en ${st.unite}
+        · actuel <span class="val">${fmt(actuel,st.decimales)}</span>
+        · pic prévu <span class="val">${fmt(pic,st.decimales)}</span></div>
+      <canvas id="st${k}"></canvas></div>`;}).join("");
+  S.forEach((st,k)=>tracerStation($("#st"+k),st));
+  $("#note-stations").innerHTML=`Saint-Laurent est <b>limnimétrique</b> : elle ne publie qu'une hauteur `
+    +`à l'échelle, jamais de débit — c'est pourquoi la prévision chez vous passe par l'amont. `
+    +`<b>Saint-Mesmin</b> jauge le débit et couvre à elle seule 62 % du bassin de Saint-Laurent : `
+    +`c'est là que la prévision se confronte à une mesure de même nature, et donc là qu'on peut `
+    +`juger de sa qualité. L'Ouin apporte les 11 % restants. Trait noir : observé. `
+    +`Trait bleu et bandes : prévision médiane et son incertitude à 50, 80 et 90 %.`;
 }
-let carte=null, calque=null, cacheImg=new Map();
-function imageFrame(k){
-  if(cacheImg.has(k)) return cacheImg.get(k);
-  const img=A.images[k], E=A.emprise, n=E.n;
-  const g=img?decoder(img.g,n):null;
-  if(!g){ cacheImg.set(k,null); return null; }
-  const cv=document.createElement("canvas"); cv.width=n; cv.height=n;
-  const c=cv.getContext("2d"), dat=c.createImageData(n,n);
-  for(let i=0;i<n*n;i++){
-    const col=couleurPluie(g[i]);
-    if(!col){ dat.data[i*4+3]=0; continue; }
-    const v=parseInt(col.slice(1),16);
-    dat.data[i*4]=(v>>16)&255; dat.data[i*4+1]=(v>>8)&255; dat.data[i*4+2]=v&255;
-    dat.data[i*4+3]=205;
-  }
-  c.putImageData(dat,0,0);
-  const url=cv.toDataURL();
-  cacheImg.set(k,url); return url;
-}
-function tracerAnim(){
-  const E=A.emprise; if(!E) return;
-  const bornes=[[E.lat0,E.lon0],[E.lat1,E.lon1]];
-  if(!carte){
-    if(typeof L==="undefined") return;
-    carte=L.map("anim",{zoomControl:true,attributionControl:true});
-    const plan=L.tileLayer("https://data.geopf.fr/wmts?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0"
-      +"&LAYER=GEOGRAPHICALGRIDSYSTEMS.PLANIGNV2&STYLE=normal&TILEMATRIXSET=PM"
-      +"&TILEMATRIX={z}&TILEROW={y}&TILECOL={x}&FORMAT=image/png",
-      {maxZoom:18,attribution:"© IGN — Plan IGN"}).addTo(carte);
-    const ortho=L.tileLayer("https://data.geopf.fr/wmts?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0"
-      +"&LAYER=ORTHOIMAGERY.ORTHOPHOTOS&STYLE=normal&TILEMATRIXSET=PM"
-      +"&TILEMATRIX={z}&TILEROW={y}&TILECOL={x}&FORMAT=image/jpeg",
-      {maxZoom:19,attribution:"© IGN — BD ORTHO"});
-    const osm=L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png",
-      {maxZoom:19,attribution:"© OpenStreetMap"});
-    L.control.layers({"Plan IGN":plan,"Photo aérienne":ortho,"OpenStreetMap":osm},{},
-      {position:"bottomright"}).addTo(carte);
-    carte.fitBounds(bornes);
-    if(A.contour){
-      L.polygon(A.contour.map(([lo,la])=>[la,lo]).filter((_,i)=>i%2===0),
-        {color:"#2f6f92",weight:1,fill:false,opacity:.35,dashArray:"4 4"}).addTo(carte);
-    }
-    const F=A.fond;
-    if(F&&F.cible){
-      L.circleMarker([F.cible.lat,F.cible.lon],{radius:6,color:"#fff",weight:2,
-        fillColor:"#b8442a",fillOpacity:1}).addTo(carte).bindTooltip("Rochereau",{permanent:true,direction:"right"});
-    }
-    L.circleMarker([46.95894,-0.88809],{radius:5,color:"#fff",weight:2,
-      fillColor:"#2f6f92",fillOpacity:1}).addTo(carte)
-      .bindTooltip("Station Saint-Laurent",{direction:"right"});
-    const lg=$("#anim-legende");
-    lg.innerHTML="<div style=\"margin-bottom:3px;font-weight:600\">mm/h</div>"
-      +ECHELLE.map(([v,c])=>`<div><i style="background:${c}"></i>${v}</div>`).join("");
-  }
-  const url=imageFrame(iAnim);
-  if(calque){ carte.removeLayer(calque); calque=null; }
-  if(url) calque=L.imageOverlay(url,bornes,{opacity:1,interactive:false}).addTo(carte);
-  const img=A.images[iAnim];
-  const et=$("#anim-etiq");
-  if(img){
-    const prevu=img.type==="prevu";
-    et.innerHTML=`<span style="color:${prevu?"var(--prev)":"var(--radar)"}">`
-      +`${prevu?"Prévision AROME":"Radar mesuré"}</span><br>`
-      +`moyenne <b>${fmt(img.moy,2)}</b> · max <b>${fmt(img.max,1)}</b> mm/h`
-      +(!prevu&&img.pt!=null?`<br>chez vous <b>${fmt(img.pt*12,1)}</b> mm/h`:"");
-  } else et.textContent="—";
-}
-function majAnim(){
-  const img=A.images[iAnim];
-  $("#anim-t").textContent=img?fdate(dt(img.t)):"—";
-  $("#curseur-anim").value=iAnim;
-  tracerAnim();
-}
-function animer(){
-  if(!A.images.length){ $("#anim-panneau").hidden=false; tracerAnim();
-    $("#note-anim").innerHTML="Aucune image radar archivée pour l'instant : la vignette du bassin "
-      +"n'est enregistrée que depuis peu, et uniquement lorsqu'il pleut. Elle se remplira au premier passage pluvieux.";
-    $("#jouer").disabled=true; return; }
-  $("#curseur-anim").max=A.images.length-1;
-  const nR=A.n_radar||0, nP=A.images.length-nR;
-  const avecPluie=A.images.filter(i=>i.g).length;
-  $("#note-anim").innerHTML=`<b>${nR} images radar</b> des 48 h écoulées puis <b>${nP} heures de prévision</b> `
-    +`AROME, dont ${avecPluie} portent de la pluie. Le cadre est bleu foncé sur le passé mesuré, `
-    +`bleu clair sur l'avenir prévu. Tout est en <b>millimètres par heure</b> : c'est la seule unité qui `
-    +`permette de comparer une image radar de 5 minutes à une prévision horaire. `
-    +`Maille de 875 m sur les deux, sur fond IGN — basculez en photo aérienne en bas à droite `
-    +`pour situer les parcelles. Le liseré pointillé est le bassin versant de Saint-Laurent ; `
-    +`« chez vous » est relevé au pixel de Rochereau, directement comparable à votre pluviomètre.`;
-  // on ouvre sur l'instant present plutot qu'a la fin de la prevision
-  iAnim=Math.max(0,Math.min(nR>0?nR-1:0,A.images.length-1));
-  $("#curseur-anim").oninput=e=>{ iAnim=+e.target.value; majAnim(); };
-  $("#jouer").onclick=()=>{
-    if(jeu){ clearInterval(jeu); jeu=null; $("#jouer").textContent="▶"; return; }
-    $("#jouer").textContent="❚❚";
-    jeu=setInterval(()=>{ iAnim=(iAnim+1)%A.images.length; majAnim(); },220);
-  };
-  majAnim();
-}
-function rendre(){ entete(); kpis(); scenarios(); bilanPluie(); pied(); tracer(); animer(); }
-if(document.readyState==="loading") addEventListener("DOMContentLoaded",()=>{});
-addEventListener("resize",()=>{ tracer(); if(carte) carte.invalidateSize(); });
+function rendre(){ entete(); kpis(); stations(); scenarios(); bilanPluie(); pied(); tracer(); }
+addEventListener("resize",()=>{ tracer(); stations(); });
 matchMedia("(prefers-color-scheme:dark)").addEventListener("change",rendre);
 rendre();
 </script>

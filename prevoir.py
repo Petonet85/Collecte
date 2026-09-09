@@ -28,7 +28,7 @@ def construire(horizon_h=72, verbose=True):
 
     courbe, _, _ = sevre.relation_transfert()
     res = sevre.prevoir(horizon_h=horizon_h, verbose=verbose)
-    res.pop("_detail_amont", None)
+    detail = res.pop("_detail_amont", {}) or {}
 
     prevision = {
         "date_prevision": res["date_prevision"],
@@ -41,6 +41,21 @@ def construire(horizon_h=72, verbose=True):
     for quantile, valeurs in res["H"].items():
         cotes = sevre.niveau_rochereau(np.asarray(valeurs, dtype=float), courbe)
         prevision["z_rochereau"][quantile] = [round(float(v), 3) for v in cotes]
+
+    # Debit prevu station par station : Saint-Mesmin porte a lui seul 62 % du
+    # bassin de Saint-Laurent, et c'est la seule des deux ou l'on dispose d'une
+    # mesure de debit a comparer directement a la prevision.
+    prevision["stations"] = {}
+    for code, bloc in detail.items():
+        p = bloc.get("prevision") or {}
+        if not p.get("prevision"):
+            continue
+        prevision["stations"][code] = {
+            "nom": bloc["nom"], "surface_km2": bloc["surface_km2"],
+            "time": p["prevision"]["time"],
+            "Q": p["prevision"]["Q"],
+            "observe": {"time": p["observe"]["time"], "Q": p["observe"]["Q"]},
+        }
     return prevision
 
 

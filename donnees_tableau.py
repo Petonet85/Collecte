@@ -43,152 +43,6 @@ def pluie_radar(fin: pd.Timestamp, heures: int = HEURES_PASSEES) -> pd.Series:
     return horaire.loc[fin - pd.Timedelta(hours=heures):fin]
 
 
-def _prevision_precedente():
-    """Champs de prevision de la derniere execution, encore valables.
-
-    Un refus temporaire du fournisseur ne doit pas vider le panneau : mieux
-    vaut un champ d'il y a six heures, date comme tel, que rien du tout.
-    """
-    chemin = os.path.join(DOCS, "tableau.json")
-    if not os.path.exists(chemin):
-        return []
-    try:
-        with open(chemin, encoding="utf-8") as fh:
-            ancien = json.load(fh)["animation"]["images"]
-    except Exception:
-        return []
-    maintenant = pd.Timestamp.now("UTC").tz_localize(None)
-    return [i for i in ancien
-            if i.get("type") == "prevu" and pd.Timestamp(i["t"]) > maintenant]
-
-
-def _fond_carte():
-    """Reperes ponctuels de l'animation.
-
-    Le fond de carte lui-meme vient des tuiles IGN, chargees par la page : les
-    dessiner a partir de vecteurs embarques coutait 60 ko pour un resultat
-    moins lisible qu'un Plan IGN, et sans photo aerienne.
-    """
-    return {"cible": {"n": "Rochereau", "lon": -0.99276, "lat": 47.000408}}
-
-
-def animation_radar(fin: pd.Timestamp, heures: int = HEURES_PASSEES) -> dict:
-    """Vignettes radar des dernieres heures, pour l'animation sur le bassin.
-
-    Chaque pas de temps ou il a plu porte une grille 20 x 20 quantifiee ; les
-    pas secs n'en portent pas et sont restitues comme des images vides.
-    """
-    bassin = json.load(open(os.path.join(BASE, "bassins.json"), encoding="utf-8"))[BASSIN_RADAR]
-    em = np.asarray(bassin["emprise"], dtype=float)
-    cadre = {"lon0": float(em[:, 0].min()), "lon1": float(em[:, 0].max()),
-             "lat0": float(em[:, 1].min()), "lat1": float(em[:, 1].max()),
-             "facteur": 24.0, "n": 24}
-    contour = [[round(float(x), 4), round(float(y), 4)] for x, y in em[::3]]
-    prevues_vide = prevision_grille(cadre) or _prevision_precedente()
-    vide = {"images": prevues_vide, "emprise": cadre, "contour": contour,
-            "fond": _fond_carte(), "facteur": 24.0, "n_radar": 0}
-
-    fichiers = sorted(glob.glob(os.path.join(BASE, "donnees", "radar", BASSIN_RADAR, "*.csv")))
-    if not fichiers:
-        return vide
-    lot = pd.concat([pd.read_csv(f, parse_dates=["instant_utc"]) for f in fichiers])
-    if "grille" not in lot.columns:
-        return vide
-    lot = lot.set_index(pd.DatetimeIndex(lot["instant_utc"]).tz_convert(None)).sort_index()
-    lot = lot.loc[fin - pd.Timedelta(hours=heures):fin]
-    lot = lot[~lot.index.duplicated(keep="last")]
-
-    images = []
-    for instant, ligne in lot.iterrows():
-        g = ligne.get("grille")
-        images.append({
-            "t": instant.isoformat(),
-            "moy": None if pd.isna(ligne["lame_mm"]) else round(float(ligne["lame_mm"]), 4),
-            "max": None if pd.isna(ligne["lame_max_mm"]) else round(float(ligne["lame_max_mm"]), 3),
-            "pt": None if "pt_rochereau" not in lot.columns or pd.isna(ligne.get("pt_rochereau"))
-                  else round(float(ligne["pt_rochereau"]), 3),
-            "g": "" if (g is None or (isinstance(g, float) and pd.isna(g))) else str(g),
-            "type": "radar",
-        })
-    prevues = prevision_grille(cadre)
-    if not prevues:
-        prevues = _prevision_precedente()
-    images += prevues
-    return {"images": images, "emprise": cadre, "contour": contour,
-            "fond": _fond_carte(),
-            "facteur": 24.0, "n_radar": sum(1 for i in images if i.get("type") == "radar")}
-
-
-def prevision_grille(cadre, heures: int = 96) -> list:
-    """Champs de pluie prevue sur le bassin, a la maille de la vignette.
-
-    Preleve la prevision AROME/ARPEGE sur la meme grille que la vignette radar
-    — 24 x 24 points, soit 1,2 km — et l'encode a l'identique, pour que
-    l'animation enchaine le passe mesure et l'avenir prevu dans la meme unite :
-    l'intensite en millimetres par heure. Le prelevement se fait par lots :
-    l'URL sature au-dela de quelques centaines de coordonnees, et le quota par
-    minute d'Open-Meteo se declenche vite sur un champ de mille points.
-    """
-    import radar as radar_mf
-
-    n = cadre["n"]
-    lons = np.linspace(cadre["lon0"], cadre["lon1"], n)
-    lats = np.linspace(cadre["lat1"], cadre["lat0"], n)   # du nord au sud, comme l'image
-    LO, LA = np.meshgrid(lons, lats)
-    # Open-Meteo compte UN APPEL PAR POINT : un champ de mille points depasse
-    # d'un coup la limite de six cents appels par minute. On preleve donc par
-    # lots espaces, sous le plafond, plutot que de se faire refuser en bloc.
-    lat_p, lon_p = LA.ravel(), LO.ravel()
-    lot = []
-    for d in range(0, len(lat_p), TAILLE_LOT):
-        if d:
-            time.sleep(PAUSE_LOT)
-        tranche = slice(d, d + TAILLE_LOT)
-        rep = None
-        for essai in range(3):
-            try:
-                rep = requests.get(
-                    "https://api.open-meteo.com/v1/forecast",
-                    params={"latitude": ",".join(f"{v:.4f}" for v in lat_p[tranche]),
-                            "longitude": ",".join(f"{v:.4f}" for v in lon_p[tranche]),
-                            "hourly": "precipitation", "models": "meteofrance_seamless",
-                            "forecast_days": max(1, min(int(np.ceil(heures / 24)), 4)),
-                            "timezone": "UTC"},
-                    headers={"User-Agent": "collecte-sevre-nantaise/2.0"}, timeout=120)
-                if rep.status_code == 429:
-                    # Quota par minute : un champ de mille points pese lourd.
-                    time.sleep(62)
-                    continue
-                rep.raise_for_status()
-                break
-            except Exception:
-                time.sleep(8 * (essai + 1))
-                rep = None
-        if rep is None or rep.status_code != 200:
-            return []
-        part = rep.json()
-        lot += part if isinstance(part, list) else [part]
-    if not lot:
-        return []
-    temps = pd.to_datetime(lot[0]["hourly"]["time"])
-    champ = np.array([x["hourly"]["precipitation"] for x in lot], dtype=float)
-    champ = np.nan_to_num(champ, nan=0.0).reshape(n, n, len(temps))
-
-    images = []
-    maintenant = pd.Timestamp.now("UTC").tz_localize(None)
-    for k, t in enumerate(temps):
-        if t <= maintenant:
-            continue
-        grille = champ[:, :, k]
-        images.append({
-            "t": t.isoformat(), "type": "prevu",
-            "moy": round(float(grille.mean()), 3),
-            "max": round(float(grille.max()), 2),
-            "g": radar_mf.encoder_vignette(grille) if grille.max() > 0.005 else "",
-        })
-    return images
-
-
 def pluie_modele(points, heures: int = HEURES_PASSEES, jours_prevus: int = 4):
     """Analyse Meteo-France passee et prevision deterministe, horaires."""
     from floodcast.sources import meteo
@@ -223,6 +77,35 @@ def _cumul_point(fin: pd.Timestamp, heures: int = HEURES_PASSEES):
     ser = ser[~ser.index.duplicated(keep="last")].sort_index()
     ser = ser.loc[fin - pd.Timedelta(hours=heures):fin].dropna()
     return round(float(ser.sum()), 2) if len(ser) else None
+
+
+def _stations(prevision, h_saint_laurent, q_amont):
+    """Les deux stations qui portent la prevision, chacune dans son unite.
+
+    Saint-Laurent est limnimetrique : on la suit en hauteur a l'echelle, la
+    seule grandeur qu'elle publie. Saint-Mesmin jauge le debit et couvre a
+    elle seule 62 % du bassin amont : c'est la que la prevision se confronte
+    a une mesure de meme nature.
+    """
+    out = []
+    out.append({
+        "code": "M703243010", "nom": "Sèvre Nantaise à Saint-Laurent-sur-Sèvre",
+        "grandeur": "hauteur", "unite": "m", "decimales": 2,
+        "surface_km2": 576,
+        "observe": {"time": [d.isoformat() for d in h_saint_laurent.index],
+                    "v": [None if not np.isfinite(x) else round(float(x), 3)
+                          for x in h_saint_laurent.to_numpy()]},
+        "prevu": {"time": prevision["time"], "q": prevision["h_saint_laurent"]},
+    })
+    for code, bloc in (prevision.get("stations") or {}).items():
+        obs = bloc["observe"]
+        out.append({
+            "code": code, "nom": bloc["nom"], "grandeur": "débit", "unite": "m³/s",
+            "decimales": 2, "surface_km2": bloc["surface_km2"],
+            "observe": {"time": obs["time"], "v": obs["Q"]},
+            "prevu": {"time": bloc["time"], "q": bloc["Q"]},
+        })
+    return out
 
 
 def assembler(prevision: dict, horizon_h: int = 72) -> dict:
@@ -299,6 +182,6 @@ def assembler(prevision: dict, horizon_h: int = 72) -> dict:
                 "prevu_p90_mm": round(float(prevue[90].sum()), 1) if len(prevue) else None,
             },
         },
-        "animation": animation_radar(t0),
+        "stations": _stations(prevision, h_obs, q_amont),
         "periodes_retour": {"maison": seuils["T_maison"], "atelier": seuils["T_atelier"]},
     }

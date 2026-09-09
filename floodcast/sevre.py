@@ -27,8 +27,8 @@ from .sources import hubeau as hb
 
 CIBLE = "M703243010"          # Saint-Laurent-sur-Sevre, station limnimetrique
 SITE_CIBLE = "M7032430"
-AMONT = {"M702241010": ("Sevre Nantaise a Saint-Mesmin", 359.0),
-         "M704401010": ("Ouin a Mauleon", 61.0)}
+AMONT = {"M702241010": ("Sèvre Nantaise à Saint-Mesmin", 359.0),
+         "M704401010": ("Ouin à Mauléon", 61.0)}
 SURFACE_CIBLE = 576.0
 OBS_ELAB = "https://hubeau.eaufrance.fr/api/v2/hydrometrie/obs_elab"
 
