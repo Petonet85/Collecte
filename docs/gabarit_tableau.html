@@ -224,7 +224,15 @@ function tracer(){
   // sur la chronique journaliere. Chaque journee y est resumee par son minimum
   // et son maximum — a cette echelle un pic de crue dure quelques heures, et
   // une moyenne l'effacerait alors que c'est ce qu'on vient voir.
-  const LONG=(x1-x0)>20*864e5 && HIST && !HIST.erreur;
+  // On passe au releve journalier dans deux cas : quand la fenetre est trop
+  // large pour que le pas horaire soit lisible, et — surtout — des qu'elle
+  // commence avant le debut du temps reel embarque. Se fier a la seule duree
+  // laissait un zoom de trois jours sur janvier 2025 chercher des donnees
+  // horaires qui n'existent pas si loin, et vider le graphe.
+  const debutHoraire=Math.max(...[D.observe.time[0]]
+    .concat((D.stations||[]).map(s=>s.observe.time[0]))
+    .filter(Boolean).map(t=>+dt(t)));
+  const LONG=HIST&&!HIST.erreur&&((x1-x0)>20*864e5||+x0<debutHoraire);
   const chronique=code=>LONG?serieJour((HIST.stations||{})[code]):null;
   const X=d=>L+(d-x0)/(x1-x0)*(W-L-R);
   const bandes=[];
@@ -272,7 +280,20 @@ function tracer(){
     const tp=st.prevu.time.map(dt), Q=st.prevu.q;
     const vals=[...visible(tO,vO),...(H_?visible(H_.t,H_.lo):[]),
                 ...visible(tp,Q["5"]||[]),...visible(tp,Q["95"]||[])];
-    if(!vals.length) return;
+    const yTv=T+hPluie+gap+k*(hSt+gap), yBv=yTv+hSt;
+    if(!vals.length){
+      // Plutot que d'escamoter la bande — ce qui decalait les suivantes et
+      // laissait croire a une panne — on la dessine vide et on l'annonce.
+      c.fillStyle=css("--papier"); c.fillRect(L,yTv,W-L-R,hSt);
+      c.strokeStyle=css("--trait"); c.lineWidth=1;
+      c.strokeRect(L+.5,yTv+.5,W-L-R-1,hSt-1);
+      c.fillStyle=css("--sourdine"); c.font="12px "+css("--texte"); c.textAlign="center";
+      c.fillText("pas de relevé sur cette période",(L+W-R)/2,yTv+hSt/2+4);
+      c.font="600 11.5px "+css("--titre"); c.textAlign="left";
+      c.fillText(`${st.nom.replace("Sèvre Nantaise à ","").toUpperCase()}`,L+6,yTv+12);
+      bandes.push({type:"vide",st,yT:yTv,yB:yBv,Y:()=>yBv,tO:[],vO:[],tp:[],Q:{}});
+      return;
+    }
     let lo=Math.min(...vals),hi=Math.max(...vals);
     const pad=Math.max((hi-lo)*.18,.02); lo-=pad; hi+=pad;
     const Y=v=>yB-(v-lo)/(hi-lo)*(yB-yT);
@@ -511,6 +532,7 @@ $("#graphe").addEventListener("mousemove",e=>{
 
   let html=`<b>${fdate(d)}</b>`+(futur?` · +${Math.round((d-t0)/36e5)} h`:"");
   g.bandes.forEach(b=>{
+    if(b.type==="vide"){ return; }
     if(b.type==="station"){
       const src=futur?b.tp:b.tO, val=futur?(b.Q["50"]||[]):b.vO;
       const i=proche(src,d), v=i>=0?val[i]:null;
