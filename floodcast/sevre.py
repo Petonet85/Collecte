@@ -105,6 +105,73 @@ def seuils_hauteur(periodes=(2, 5, 10, 20, 50)) -> dict:
     return out
 
 
+# --- Propagation vers l'aval -------------------------------------------------
+#
+# Distances mesurees le long du cours d'eau sur le reseau hydrographique BD TOPO
+# de l'IGN (WFS Geoplateforme, troncon_hydrographique), et non a vol d'oiseau :
+# la Sevre serpente. Sa sinuosite vaut 1,41 entre Saint-Mesmin et Saint-Laurent,
+# 1,44 entre Saint-Laurent et Rochereau, et l'Ouin 2,69 entre Mauleon et la
+# confluence. Prendre la distance directe raccourcirait le trajet de 30 %.
+PARCOURS_KM = {"M702241010": 30.8, "M704401010": 18.1}
+PARCOURS_ROCHEREAU_KM = 13.2
+
+# Celerite de l'onde de crue. Ce n'est pas la vitesse de l'eau mais celle de la
+# perturbation, environ 5/3 de la vitesse moyenne en lit uniforme. Pour une
+# riviere de cette taille en crue, la gamme usuelle est 1 a 2 m/s ; on retient
+# la borne basse, prudente. C'est le seul parametre non mesure de cette section :
+# faute d'une crue archivee a pas horaire, il n'a pas encore pu etre cale. La
+# correlation croisee sur les trente derniers jours place bien son maximum a
+# +7,75 h entre Saint-Mesmin et Saint-Laurent, ce que 1,2 m/s reproduit a une
+# demi-heure pres, mais avec un coefficient de 0,05 : c'est une coincidence
+# encourageante, pas une mesure. En etiage la celerite est nettement plus
+# faible, donc les retards affiches sont des retards de crue.
+CELERITE_MS = 1.2
+
+# Part du bassin de Saint-Laurent qui n'est pas jaugee : 156 des 576 km². Cette
+# pluie-la tombe entre les stations amont et Saint-Laurent, et n'a donc pas les
+# 30 km de riviere a parcourir. Retarder tout le debit reviendrait a faire
+# monter Saint-Laurent trop tard d'un bon quart de son bassin.
+PART_INTERMEDIAIRE = 156.0 / SURFACE_CIBLE
+
+
+def retard_h(distance_km: float, celerite_ms: float = CELERITE_MS) -> float:
+    """Temps de parcours de l'onde de crue, en heures."""
+    return distance_km * 1000.0 / celerite_ms / 3600.0
+
+
+def _historique(q_observe, t0, n_heures: int, defaut):
+    """Les `n_heures` derniers debits horaires mesures, se terminant a t0."""
+    idx = pd.date_range(t0 - pd.Timedelta(hours=n_heures - 1), t0, freq="h")
+    if q_observe is None or not len(q_observe):
+        return np.full(n_heures, defaut, dtype=float)
+    serie = q_observe.reindex(idx).interpolate(limit_direction="both")
+    return np.nan_to_num(serie.to_numpy(dtype=float), nan=defaut)
+
+
+def translater(traj, q_observe, t0, retard: float, pas_h: float = 1.0):
+    """Decale des trajectoires de debit du temps de parcours vers l'aval.
+
+    Ce qui atteint l'aval a l'instant t est passe a l'amont `retard` heures plus
+    tot. Le decalage n'est donc pas un artifice d'affichage : sur les premieres
+    heures de l'echeance, l'eau qui arrivera a l'aval est deja passee devant la
+    station amont, et on la remplace par du debit *mesure* au lieu du debit
+    simule. Sur ce laps, la prevision aval cesse de dependre de la pluie a venir.
+    """
+    traj = np.atleast_2d(np.asarray(traj, dtype=float))
+    n = traj.shape[1]
+    h_prev = np.arange(1, n + 1) * pas_h
+    if retard <= 0:
+        return traj.copy()
+    k = int(np.ceil(retard / pas_h)) + 2
+    hist = _historique(q_observe, t0, k, float(np.median(traj[:, 0])))
+    axe = np.concatenate([np.arange(-(k - 1), 1) * pas_h, h_prev])
+    vise = h_prev - retard
+    sortie = np.empty_like(traj)
+    for m in range(traj.shape[0]):
+        sortie[m] = np.interp(vise, axe, np.concatenate([hist, traj[m]]))
+    return sortie
+
+
 def prevoir(horizon_h: int = 72, verbose: bool = True) -> dict:
     """Chaine complete : previsions amont, sommation, conversion en hauteur."""
     def log(msg):
@@ -121,27 +188,62 @@ def prevoir(horizon_h: int = 72, verbose: bool = True) -> dict:
     log(f"seuils : {seuils['n_annees']} maxima annuels — "
         + ", ".join(f"T{T}={seuils[T]} m" for T in (2, 5, 10, 20, 50) if T in seuils))
 
-    trajectoires = None
+    brut = None            # somme des amonts, sans decalage
+    decale = None          # somme des amonts, chacun avec son temps de parcours
+    q_amont_obs = None     # debit amont mesure, pour alimenter le debut d'echeance
     horodatage = None
     detail = {}
+    propagation = {}
     for code, (nom, surface) in AMONT.items():
         log(f"prevision amont : {nom}…")
         ctx = build_context(code, verbose=verbose)
         res = run(ctx, horizon_h=horizon_h, verbose=verbose, retour_trajectoires=True)
         traj = res.pop("_trajectoires")
         horodatage = res.pop("_horodatage")
-        res.pop("_q_observe", None)
+        q_obs = res.pop("_q_observe", None)
         detail[code] = {"nom": nom, "surface_km2": surface, "prevision": res}
+        t0 = horodatage[0] - pd.Timedelta(hours=1)
+
+        # Chaque station a sa propre distance a Saint-Laurent : l'Ouin rejoint la
+        # Sevre bien plus bas que Saint-Mesmin, un retard commun serait faux pour
+        # les deux.
+        tau = retard_h(PARCOURS_KM[code])
+        propagation[code] = {"nom": nom, "distance_km": PARCOURS_KM[code],
+                             "retard_h": round(tau, 1)}
+        log(f"propagation {nom} → Saint-Laurent : {PARCOURS_KM[code]:.1f} km de "
+            f"riviere, {tau:.1f} h a {CELERITE_MS} m/s")
+        vers_aval = translater(traj, q_obs, t0, tau)
+
         # Les deux bassins partagent les memes membres de pluie : on peut sommer
         # trajectoire par trajectoire au lieu d'additionner des quantiles, ce qui
         # supposerait leurs rangs parfaitement correles et gonflerait l'incertitude.
-        trajectoires = traj if trajectoires is None else trajectoires + traj
+        brut = traj if brut is None else brut + traj
+        decale = vers_aval if decale is None else decale + vers_aval
+        if q_obs is not None and len(q_obs):
+            q_amont_obs = q_obs if q_amont_obs is None else q_amont_obs.add(q_obs, fill_value=0.0)
 
-    # Les 156 km² intermediaires ne sont pas jauges : on les represente au prorata
-    # de la surface, ce que la relation de transfert a de toute facon deja absorbe
-    # puisqu'elle a ete calee sur le debit amont, non sur le debit total.
+    # Ce qui fait monter Saint-Laurent vient de deux endroits qui n'arrivent pas
+    # ensemble : 73 % du bassin est jauge a l'amont et doit parcourir la riviere,
+    # 27 % tombe entre les stations et Saint-Laurent et n'a pas ce trajet a faire.
+    # On melange donc le debit amont decale et le meme debit non decale, pris au
+    # prorata des surfaces, faute de station dans l'intervalle. C'est une
+    # approximation du premier ordre : elle place correctement le debut de montee
+    # et le pic, mais ne pretend pas restituer la forme exacte de l'hydrogramme.
+    trajectoires = (1.0 - PART_INTERMEDIAIRE) * decale + PART_INTERMEDIAIRE * brut
     quantiles_q = {p: np.percentile(trajectoires, p, axis=0) for p in (5, 10, 25, 50, 75, 90, 95)}
     quantiles_h = {p: courbe.to_h(v) for p, v in quantiles_q.items()}
+
+    # Rochereau est 13,2 km sous Saint-Laurent : l'eau y arrive encore plus tard.
+    tau_roch = retard_h(PARCOURS_ROCHEREAU_KM)
+    t0 = horodatage[0] - pd.Timedelta(hours=1)
+    traj_roch = translater(trajectoires, q_amont_obs, t0, tau_roch)
+    quantiles_h_roch = {p: courbe.to_h(np.percentile(traj_roch, p, axis=0))
+                        for p in (5, 10, 25, 50, 75, 90, 95)}
+    propagation["rochereau"] = {"nom": "Rochereau, Mortagne-sur-Sèvre",
+                                "distance_km": PARCOURS_ROCHEREAU_KM,
+                                "retard_h": round(tau_roch, 1)}
+    log(f"propagation Saint-Laurent → Rochereau : {PARCOURS_ROCHEREAU_KM:.1f} km, "
+        f"{tau_roch:.1f} h")
 
     # La relation n'a ete calee que sur les mois depassant 0,8 m : en dessous elle
     # s'aplatit et rend une hauteur constante, incapable meme de reproduire le
@@ -174,6 +276,9 @@ def prevoir(horizon_h: int = 72, verbose: bool = True) -> dict:
         # Quatre decimales : la cote a Rochereau se deduit de cette hauteur, et
         # un arrondi au millimetre y laisse des marches visibles a l'ecran.
         "H": {str(p): list(np.round(v, 4)) for p, v in quantiles_h.items()},
+        # Meme echeance, mais l'eau vue a Rochereau : trois heures de riviere
+        # plus tard que celle qui passe devant l'echelle de Saint-Laurent.
+        "H_rochereau": {str(p): list(np.round(v, 4)) for p, v in quantiles_h_roch.items()},
         "observe": {"time": [d.isoformat() for d in h_obs.index],
                     "H": list(np.round(h_obs.to_numpy(), 3))},
         "seuils": seuils, "depassements": depassements,
@@ -182,6 +287,9 @@ def prevoir(horizon_h: int = 72, verbose: bool = True) -> dict:
                      "debit_plancher_m3s": q_plancher,
                      "dans_la_gamme": [bool(x) for x in dans_la_gamme]},
         "transfert": diag_transfert,
+        "propagation": {"celerite_ms": CELERITE_MS,
+                        "part_intermediaire": round(PART_INTERMEDIAIRE, 3),
+                        "trajets": propagation},
         "amont": {c: {"nom": d["nom"], "surface_km2": d["surface_km2"]} for c, d in detail.items()},
         "_detail_amont": detail,
     }

@@ -34,11 +34,15 @@ def construire(horizon_h=72, verbose=True):
         "date_prevision": res["date_prevision"],
         "time": res["time"],
         "h_saint_laurent": res["H"],
+        "propagation": res.get("propagation"),
         "observe_h": res["observe"]["H"][-1] if res["observe"]["H"] else None,
         "genere_le": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "z_rochereau": {},
     }
-    for quantile, valeurs in res["H"].items():
+    # La cote a Rochereau se calcule sur la hauteur DECALEE du temps de parcours
+    # Saint-Laurent -> Rochereau, pas sur celle de l'echelle de Saint-Laurent :
+    # treize kilometres de riviere separent les deux.
+    for quantile, valeurs in res.get("H_rochereau", res["H"]).items():
         cotes = sevre.niveau_rochereau(np.asarray(valeurs, dtype=float), courbe)
         prevision["z_rochereau"][quantile] = [round(float(v), 4) for v in cotes]
 

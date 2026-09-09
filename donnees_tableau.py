@@ -183,6 +183,7 @@ def assembler(prevision: dict, horizon_h: int = 72) -> dict:
             "horizon_h": horizon_h,
         },
         "seuils": calage["seuils_propriete"],
+        "propagation": prevision.get("propagation"),
         "scenarios": [s for s in calage["scenarios"] if not s.get("ancre")],
         "reperes": [s for s in calage["scenarios"] if s.get("ancre")],
         "observe": {
