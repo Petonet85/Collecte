@@ -64,6 +64,21 @@ def construire(horizon_h=72, verbose=True):
     return prevision
 
 
+def archiver(prevision):
+    """Fige la prevision emise, pour pouvoir la juger plus tard.
+
+    Sans cette trace, chaque passage ecrase le precedent et l'on ne peut jamais
+    mesurer la justesse reelle de la chaine — seulement la rejouer sur des crues
+    passees en connaissant deja la pluie, ce qui la flatte.
+    """
+    try:
+        import verification
+        chemin = verification.archiver(prevision, prevision.get("observe_h"))
+        print(f"  prevision archivee : {os.path.relpath(chemin, BASE)}")
+    except Exception as exc:  # noqa: BLE001 - l'archive ne doit jamais bloquer la prevision
+        print(f"  archivage impossible ({exc})")
+
+
 def ecrire_tableau(prevision, horizon_h=72):
     """Tableau de bord : hydrogramme, seuils de la propriete, pluie du bassin."""
     import donnees_tableau
@@ -114,6 +129,9 @@ def main(argv=None):
     args = p.parse_args(argv)
 
     prevision = construire(args.horizon, verbose=not args.silencieux)
+    # Archiver AVANT d'ecrire les pages : si la generation echoue plus loin, la
+    # prevision emise reste tracee, ce qui est le seul moment ou on peut la figer.
+    archiver(prevision)
     carte = ecrire_page(prevision)
     chemin = ecrire_tableau(prevision, args.horizon)
 
