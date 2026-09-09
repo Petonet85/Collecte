@@ -60,13 +60,7 @@ tr.repere td{color:var(--seuil)}
 .note{font-size:12.5px;color:var(--sourdine);line-height:1.55}
 .dedans{color:var(--alerte);font-weight:600}
 .scroll{overflow-x:auto}
-.stations{display:grid;gap:18px 20px;grid-template-columns:1fr}
-@media(min-width:1000px){.stations{grid-template-columns:repeat(3,1fr)}}
-@media(min-width:640px) and (max-width:999px){.stations{grid-template-columns:1fr}}
-.station{min-width:0}
-.station h3{font-family:var(--titre);font-size:15px;font-weight:600;margin:0 0 1px;letter-spacing:.01em}
-.station .meta{font-size:12px;color:var(--sourdine);margin-bottom:7px}
-.station .val{font-family:var(--mono);font-size:13px;font-variant-numeric:tabular-nums}
+#stations-hote{position:relative}
   border:1px solid var(--trait);padding:6px 8px;font-family:var(--mono);font-size:9.5px;line-height:1.5}
   border:1px solid var(--trait);padding:6px 9px;font-family:var(--titre);font-size:12px;
   letter-spacing:.05em;text-transform:uppercase;line-height:1.5}
@@ -105,7 +99,7 @@ a{color:var(--eau)}
 
 <div class="panneau">
   <h2>Stations qui portent la prévision</h2>
-  <div class="stations" id="stations"></div>
+  <div id="stations-hote"><canvas id="stations"></canvas></div>
   <p class="note" id="note-stations"></p>
 </div>
 
@@ -330,74 +324,124 @@ $("#graphe").addEventListener("mousemove",e=>{
 $("#graphe").addEventListener("mouseleave",()=>$("#tt").style.opacity=0);
 
 /* ---------------------------------------------------------------- stations */
-function tracerStation(cv,st){
-  const dpr=devicePixelRatio||1, W=cv.parentElement.clientWidth, H=200;
-  // Une page ouverte dans un onglet masque ou un cadre replie a une largeur
-  // nulle : dessiner la laisserait un canvas vide meme apres affichage.
+/* Les trois stations partagent un seul canvas et un seul axe des temps : c'est
+   la condition pour lire les decalages de montee et de descente d'une station
+   a l'autre. Trois graphiques separes, chacun avec son echelle, rendraient la
+   comparaison temporelle impossible a l'oeil. */
+const ORDRE=["M702241010","M704401010","M703243010"];   // de l'amont vers l'aval
+function stationsOrdonnees(){
+  const S=D.stations||[];
+  return ORDRE.map(c=>S.find(s=>s.code===c)).filter(Boolean)
+    .concat(S.filter(s=>!ORDRE.includes(s.code)));
+}
+let geoStations=null;
+function tracerStations(){
+  const cv=$("#stations"); if(!cv) return;
+  const S=stationsOrdonnees(); if(!S.length) return;
+  const dpr=devicePixelRatio||1, W=cv.parentElement.clientWidth-2;
   if(W<40) return;
+  const hUn=148, ecart=16, T=10, B=26, L=54, R=12;
+  const H=T+S.length*hUn+(S.length-1)*ecart+B;
   cv.width=W*dpr; cv.height=H*dpr; cv.style.width=W+"px"; cv.style.height=H+"px";
   const c=cv.getContext("2d"); c.setTransform(dpr,0,0,dpr,0,0); c.clearRect(0,0,W,H);
-  const L=46,R=8,T=8,B=20, yB=H-B, hH=yB-T;
-  const tO=st.observe.time.map(dt), vO=st.observe.v;
-  const tP=st.prevu.time.map(dt), Q=st.prevu.q;
+
+  const tP=S[0].prevu.time.map(dt);
   const x0=new Date(t0.getTime()-5*864e5), x1=tP.length?tP[tP.length-1]:t0;
   const X=d=>L+(d-x0)/(x1-x0)*(W-L-R);
-  let vals=[...vO,...(Q["5"]||[]),...(Q["95"]||[])].filter(v=>v!=null&&isFinite(v));
-  if(!vals.length) return;
-  let lo=Math.min(...vals),hi=Math.max(...vals);
-  const pad=Math.max((hi-lo)*.14,st.decimales>1?.02:.3); lo-=pad; hi+=pad;
-  const Y=v=>yB-(v-lo)/(hi-lo)*hH;
+  const cadres=[];
 
-  c.strokeStyle=css("--trait"); c.fillStyle=css("--sourdine"); c.font="10px system-ui";
-  const brut=(hi-lo)/4, mag=Math.pow(10,Math.floor(Math.log10(brut)));
-  const pas=[1,2,2.5,5,10].find(x=>x*mag>=brut)*mag;
-  for(let v=Math.ceil(lo/pas)*pas;v<=hi;v+=pas){ const y=Y(v); if(y<T||y>yB)continue;
-    c.globalAlpha=.5;c.beginPath();c.moveTo(L,y+.5);c.lineTo(W-R,y+.5);c.stroke();c.globalAlpha=1;
-    c.textAlign="right"; c.fillText(fmt(v,st.decimales),L-6,y+3.5); }
+  S.forEach((st,k)=>{
+    const yT=T+k*(hUn+ecart), yB=yT+hUn;
+    const tO=st.observe.time.map(dt), vO=st.observe.v;
+    const tp=st.prevu.time.map(dt), Q=st.prevu.q;
+    let vals=[...vO,...(Q["5"]||[]),...(Q["95"]||[])].filter(v=>v!=null&&isFinite(v));
+    if(!vals.length) return;
+    let lo=Math.min(...vals),hi=Math.max(...vals);
+    const pad=Math.max((hi-lo)*.16,st.unite==="m"?.02:.01); lo-=pad; hi+=pad;
+    const Y=v=>yB-(v-lo)/(hi-lo)*(yB-yT);
+    cadres.push({st,yT,yB,Y,tO,vO,tp,Q});
+
+    c.fillStyle=css("--carte"); c.fillRect(L,yT,W-L-R,yB-yT);
+    c.strokeStyle=css("--trait"); c.lineWidth=1;
+    c.strokeRect(L+.5,yT+.5,W-L-R-1,yB-yT-1);
+    const brut=(hi-lo)/3, mag=Math.pow(10,Math.floor(Math.log10(brut)));
+    const pas=[1,2,2.5,5,10].find(x=>x*mag>=brut)*mag;
+    c.font="10px "+css("--mono"); c.fillStyle=css("--sourdine");
+    for(let v=Math.ceil(lo/pas)*pas;v<=hi;v+=pas){ const y=Y(v); if(y<yT+2||y>yB-2)continue;
+      c.globalAlpha=.45;c.beginPath();c.moveTo(L,y+.5);c.lineTo(W-R,y+.5);c.stroke();c.globalAlpha=1;
+      c.textAlign="right"; c.fillText(fmt(v,st.decimales),L-6,y+3.5); }
+
+    [["5","95",css("--b3")],["10","90",css("--b2")],["25","75",css("--b1")]].forEach(([a,b,col])=>{
+      if(!Q[a]||!Q[b]) return;
+      c.fillStyle=col; c.beginPath();
+      Q[a].forEach((v,i)=>{const x=X(tp[i]),y=Y(v); i?c.lineTo(x,y):c.moveTo(x,y);});
+      for(let i=Q[b].length-1;i>=0;i--) c.lineTo(X(tp[i]),Y(Q[b][i]));
+      c.closePath(); c.fill(); });
+    const ligne=(xs,ys,col,w)=>{ c.strokeStyle=col;c.lineWidth=w;c.beginPath(); let on=false;
+      ys.forEach((v,i)=>{ if(v==null||!isFinite(v)){on=false;return;} const x=X(xs[i]),y=Y(v);
+        on?c.lineTo(x,y):c.moveTo(x,y); on=true; }); c.stroke(); };
+    ligne(tO,vO,css("--obs"),1.7);
+    if(Q["50"]) ligne(tp,Q["50"],css("--med"),2);
+
+    c.fillStyle=css("--encre"); c.font="600 12.5px "+css("--titre"); c.textAlign="left";
+    c.fillText(`${st.nom.replace("Sèvre Nantaise à ","")} — ${st.surface_km2} km² — ${st.unite}`.toUpperCase(),L+7,yT+15);
+  });
+
+  // repere de l'instant present, traverse les trois cadres
+  const xNow=X(t0);
+  c.strokeStyle=css("--sourdine"); c.setLineDash([3,3]); c.lineWidth=1;
+  c.beginPath(); c.moveTo(xNow+.5,T); c.lineTo(xNow+.5,H-B); c.stroke(); c.setLineDash([]);
+
+  c.fillStyle=css("--sourdine"); c.font="10px system-ui"; c.textAlign="center";
   for(let d=new Date(x0); d<=x1; d.setUTCHours(0,0,0,0),d.setUTCDate(d.getUTCDate()+1)){
     const x=X(d); if(x<L)continue;
-    c.globalAlpha=.35;c.beginPath();c.moveTo(x+.5,T);c.lineTo(x+.5,yB);c.stroke();c.globalAlpha=1;
-    c.textAlign="center"; c.fillStyle=css("--sourdine");
-    c.fillText(d.toLocaleDateString("fr-FR",{day:"2-digit",month:"2-digit",timeZone:"UTC"}),x,yB+14); }
-
-  [["5","95",css("--b3")],["10","90",css("--b2")],["25","75",css("--b1")]].forEach(([a,b,col])=>{
-    if(!Q[a]||!Q[b]) return;
-    c.fillStyle=col; c.beginPath();
-    Q[a].forEach((v,i)=>{const x=X(tP[i]),y=Y(v); i?c.lineTo(x,y):c.moveTo(x,y);});
-    for(let i=Q[b].length-1;i>=0;i--) c.lineTo(X(tP[i]),Y(Q[b][i]));
-    c.closePath(); c.fill(); });
-  const ligne=(xs,ys,col,w)=>{ c.strokeStyle=col;c.lineWidth=w;c.beginPath(); let on=false;
-    ys.forEach((v,i)=>{ if(v==null||!isFinite(v)){on=false;return;} const x=X(xs[i]),y=Y(v);
-      on?c.lineTo(x,y):c.moveTo(x,y); on=true; }); c.stroke(); };
-  ligne(tO,vO,css("--obs"),1.7);
-  if(Q["50"]) ligne(tP,Q["50"],css("--med"),2);
-  c.strokeStyle=css("--sourdine"); c.setLineDash([3,3]); c.lineWidth=1;
-  c.beginPath(); c.moveTo(X(t0)+.5,T); c.lineTo(X(t0)+.5,yB); c.stroke(); c.setLineDash([]);
+    c.strokeStyle=css("--trait"); c.globalAlpha=.5;
+    c.beginPath(); c.moveTo(x+.5,T); c.lineTo(x+.5,H-B); c.stroke(); c.globalAlpha=1;
+    c.fillText(d.toLocaleDateString("fr-FR",{weekday:"short",day:"2-digit",month:"2-digit",timeZone:"UTC"}),x,H-9);
+  }
+  geoStations={X,cadres,L,R,W,H,T,B,x0,x1};
 }
 function stations(){
-  const S=D.stations||[];
-  if(!S.length){ $("#stations").innerHTML='<p class="note">Prévision par station indisponible.</p>'; return; }
-  $("#stations").innerHTML=S.map((st,k)=>{
-    const vO=st.observe.v.filter(v=>v!=null&&isFinite(v));
-    const actuel=vO.length?vO[vO.length-1]:null;
-    const med=st.prevu.q["50"]||[];
-    const pic=med.length?Math.max(...med):null;
-    return `<div class="station">
-      <h3>${st.nom}</h3>
-      <div class="meta">${st.surface_km2} km² · ${st.grandeur} en ${st.unite}
-        · actuel <span class="val">${fmt(actuel,st.decimales)}</span>
-        · pic prévu <span class="val">${fmt(pic,st.decimales)}</span></div>
-      <canvas id="st${k}"></canvas></div>`;}).join("");
-  S.forEach((st,k)=>tracerStation($("#st"+k),st));
-  $("#note-stations").innerHTML=`Saint-Laurent est <b>limnimétrique</b> : elle ne publie qu'une hauteur `
-    +`à l'échelle, jamais de débit — c'est pourquoi la prévision chez vous passe par l'amont. `
-    +`<b>Saint-Mesmin</b> jauge le débit et couvre à elle seule 62 % du bassin de Saint-Laurent : `
-    +`c'est là que la prévision se confronte à une mesure de même nature, et donc là qu'on peut `
-    +`juger de sa qualité. L'Ouin apporte les 11 % restants. Trait noir : observé. `
-    +`Trait bleu et bandes : prévision médiane et son incertitude à 50, 80 et 90 %.`;
+  const S=stationsOrdonnees();
+  if(!S.length){ $("#stations-hote").innerHTML='<p class="note">Prévision par station indisponible.</p>'; return; }
+  tracerStations();
+  $("#note-stations").innerHTML=`De l'amont vers l'aval, sur <b>un axe des temps commun</b> : `
+    +`c'est ce qui permet de lire le décalage entre la montée à Saint-Mesmin et son arrivée à `
+    +`Saint-Laurent. Saint-Laurent est <b>limnimétrique</b> — elle ne publie qu'une hauteur, jamais `
+    +`de débit, d'où la prévision par l'amont. Saint-Mesmin porte 62 % du bassin et l'Ouin 11 % ; `
+    +`c'est à Saint-Mesmin que la prévision se confronte à une mesure de même nature. `
+    +`Trait noir : observé. Trait bleu et bandes : médiane prévue et incertitude à 50, 80 et 90 %.`;
 }
 function rendre(){ entete(); kpis(); stations(); scenarios(); bilanPluie(); pied(); tracer(); }
-function redessiner(){ tracer(); stations(); }
+
+/* Curseur commun aux trois stations : la valeur de chacune au meme instant,
+   pour chiffrer le decalage plutot que de l'estimer a l'oeil. */
+$("#stations").addEventListener("mousemove",e=>{
+  const g=geoStations; if(!g) return;
+  const r=e.target.getBoundingClientRect(), px=(e.clientX-r.left)/r.width*g.W;
+  const tt=$("#tt");
+  if(px<g.L||px>g.W-g.R){ tt.style.opacity=0; tracerStations(); return; }
+  const d=new Date(+g.x0+(px-g.L)/(g.W-g.L-g.R)*(g.x1-g.x0));
+  tracerStations();
+  const cv=$("#stations"), c=cv.getContext("2d");
+  c.strokeStyle=css("--seuil"); c.lineWidth=1;
+  c.beginPath(); c.moveTo(px+.5,g.T); c.lineTo(px+.5,g.H-g.B); c.stroke();
+  const proche=(arr,x)=>{let b=-1,bd=Infinity;arr.forEach((v,i)=>{const k=Math.abs(v-x);if(k<bd){bd=k;b=i;}});return b;};
+  let html=`<b>${fdate(d)}</b>`;
+  g.cadres.forEach(f=>{
+    const futur=d>t0;
+    const src=futur?f.tp:f.tO, val=futur?(f.Q["50"]||[]):f.vO;
+    const i=proche(src,d); const v=i>=0?val[i]:null;
+    if(v!=null&&isFinite(v)){
+      c.fillStyle=css("--seuil"); c.beginPath(); c.arc(px,f.Y(v),3.5,0,7); c.fill();
+      html+=`<br>${f.st.nom.replace("Sèvre Nantaise à ","")} <b>${fmt(v,f.st.decimales)}</b> ${f.st.unite}`;
+    }
+  });
+  tt.innerHTML=html; tt.style.opacity=1;
+  tt.style.left=Math.min(e.clientX+14,innerWidth-230)+"px"; tt.style.top=(e.clientY-10)+"px";
+});
+$("#stations").addEventListener("mouseleave",()=>{ $("#tt").style.opacity=0; tracerStations(); });
+function redessiner(){ tracer(); tracerStations(); }
 addEventListener("resize",redessiner);
 // Le redimensionnement seul ne suffit pas : une page rendue d'abord a largeur
 // nulle ne recoit jamais d'evenement resize quand son conteneur s'ouvre.
