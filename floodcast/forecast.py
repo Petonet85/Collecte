@@ -464,7 +464,7 @@ def _assemble(ctx, t0, idx, qs, det_q, noisy, q_obs, h_obs, q_sim_past, met_h, e
     def to_h(arr):
         return list(np.round(rc.to_h(arr), 3)) if rc else None
 
-    obs_win = q_obs.loc[t0 - pd.Timedelta(days=15):]
+    obs_win = q_obs.loc[t0 - pd.Timedelta(days=20):]
     sim_win = q_sim_past.loc[t0 - pd.Timedelta(days=15):]
     h_win = h_obs.loc[obs_win.index[0]:] if len(h_obs) else pd.Series(dtype=float)
     rain_past = met_h.loc[t0 - pd.Timedelta(days=15):t0, "P"]

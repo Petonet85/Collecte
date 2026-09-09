@@ -166,7 +166,9 @@ def assembler(prevision: dict, horizon_h: int = 72) -> dict:
     # detour n'a plus lieu d'etre, et il avait le defaut d'ignorer le retard.
     t0 = pd.Timestamp(prevision["date_prevision"].replace(" ", "T").rstrip("Z"))
     h_obs = hb.hourly(hb.observations_tr("M703243010", "H", 20)).dropna()
-    h_obs = h_obs.loc[t0 - pd.Timedelta(days=12):]
+    # Vingt jours et non douze : c'est ce que Hub'Eau sert de toute facon, et la
+    # page laisse desormais choisir la profondeur d'historique affichee.
+    h_obs = h_obs.loc[t0 - pd.Timedelta(days=20):]
     tau_bief = sevre.retard_rochereau()
     h_bief = h_obs.copy()
     h_bief.index = h_bief.index + pd.Timedelta(hours=tau_bief)

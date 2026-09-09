@@ -91,6 +91,8 @@ a{color:var(--eau)}
   <h2>De la pluie au bassin jusqu'à votre parcelle, sur un axe des temps commun</h2>
   <canvas id="graphe" height="520"></canvas>
   <div class="choix">
+    <label for="fenetre">Historique affiché :</label>
+    <select id="fenetre"></select>
     <label for="crue-ref">Comparer à une crue passée :</label>
     <select id="crue-ref"></select>
     <span class="note-choix" id="note-crue"></span>
@@ -163,6 +165,7 @@ function stationsOrdonnees(){
 }
 let G=null;
 let choixCrue=null;   // crue de reference superposee au graphe de Rochereau
+let joursPasses=5;    // profondeur d'historique affichee, en jours
 
 function tracer(){
   const cv=$("#graphe"), dpr=devicePixelRatio||1;
@@ -174,7 +177,7 @@ function tracer(){
   cv.width=W*dpr; cv.height=H*dpr; cv.style.width=W+"px"; cv.style.height=H+"px";
   const c=cv.getContext("2d"); c.setTransform(dpr,0,0,dpr,0,0); c.clearRect(0,0,W,H);
 
-  const x0=new Date(t0.getTime()-5*864e5), x1=tPrev[tPrev.length-1];
+  const x0=new Date(t0.getTime()-joursPasses*864e5), x1=tPrev[tPrev.length-1];
 
   /* L'echelle verticale doit se regler sur ce qu'on VOIT. Elle se calculait
      jusqu'ici sur toute la serie observee, dont sept a dix jours tombent hors
@@ -537,6 +540,21 @@ function stations(){
     +`<br><br>Trait noir : observé. Trait bleu et bandes : médiane prévue et incertitude à 50, 80 et 90 %.`;
 
 }
+function fenetre(){
+  const sel=$("#fenetre"); if(!sel) return;
+  /* On ne propose que des profondeurs reellement couvertes : offrir quinze
+     jours quand la station n'en sert que douze donnerait un graphe a moitie
+     vide, qu'on prendrait pour une panne. */
+  const debuts=[...(D.stations||[]).map(s=>s.observe.time[0]),D.observe.time[0]]
+    .filter(Boolean).map(dt);
+  const dispo=debuts.length?(t0-Math.max(...debuts.map(Number)))/864e5:5;
+  const choix=[1,2,3,5,7,10,15,20].filter(j=>j<=dispo+0.5);
+  if(!choix.length) choix.push(Math.max(Math.floor(dispo),1));
+  if(!choix.includes(joursPasses)) joursPasses=choix[choix.length-1];
+  sel.innerHTML=choix.map(j=>`<option value="${j}"${j===joursPasses?" selected":""}>`
+    +`${j} jour${j>1?"s":""}</option>`).join("");
+  sel.onchange=e=>{ joursPasses=+e.target.value; tracer(); };
+}
 function crues(){
   const sel=$("#crue-ref"); if(!sel) return;
   const tout=(D.reperes||[]).concat(D.scenarios||[]).slice().sort((a,b)=>b.z-a.z);
@@ -551,7 +569,7 @@ function crues(){
   sel.onchange=e=>{ choixCrue=e.target.value||null; note(); tracer(); };
   note();
 }
-function rendre(){ entete(); kpis(); crues(); stations(); scenarios(); bilanPluie(); pied(); tracer(); }
+function rendre(){ entete(); kpis(); fenetre(); crues(); stations(); scenarios(); bilanPluie(); pied(); tracer(); }
 
 /* Curseur commun aux trois stations : la valeur de chacune au meme instant,
    pour chiffrer le decalage plutot que de l'estimer a l'oeil. */
