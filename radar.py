@@ -58,8 +58,6 @@ POINTS = {"rochereau": (-0.99276, 47.000408)}
 # est stockee en racine carree — un octet couvre alors 0 a 113 mm/h avec une
 # resolution fine dans les faibles valeurs, la ou la lecture est la plus utile.
 # Environ 400 octets par pas de temps, et rien du tout quand il ne pleut pas.
-VIGNETTE = 24
-VIGNETTE_FACTEUR = 24.0        # q = racine(mm/h) * facteur
 
 # La passerelle Meteo-France coupe son point d'entree ("303001 SUSPENDED") des
 # qu'on l'interroge trop vite. On reessaie largement espace plutot que d'insister.
@@ -207,31 +205,6 @@ def derniere_grille(cle, maille=MAILLE):
 # Extraction
 # --------------------------------------------------------------------------- #
 
-def encoder_vignette(champ_mm_h):
-    """Quantifie un champ d'intensite (mm/h) en un octet par maille."""
-    q = np.clip(np.round(np.sqrt(np.maximum(champ_mm_h, 0)) * VIGNETTE_FACTEUR), 0, 255)
-    return base64.b64encode(q.astype(np.uint8).tobytes()).decode()
-
-
-def _vignette(bloc, masque, duree_min, n=VIGNETTE):
-    """Reduit la fenetre du bassin a une petite grille d'intensite, en mm/h.
-
-    On passe en mm/h plutot qu'en cumul sur le pas de temps : c'est la seule
-    unite qui permette de comparer une image radar de cinq minutes a une
-    prevision horaire dans la meme animation.
-    """
-    h, w = bloc.shape
-    lignes = np.array_split(np.arange(h), min(n, h))
-    colonnes = np.array_split(np.arange(w), min(n, w))
-    out = np.zeros((len(lignes), len(colonnes)))
-    for i, li in enumerate(lignes):
-        for j, co in enumerate(colonnes):
-            sous = bloc[np.ix_(li, co)]
-            m = masque[np.ix_(li, co)]
-            out[i, j] = float(np.nanmean(sous[m])) if m.any() else 0.0
-    return encoder_vignette(out * (60.0 / max(duree_min, 1))), out.shape
-
-
 def lame_bassin(contenu, emprise, surface_km2, cache_masque=None, points=None):
     """Lame d'eau moyenne (mm) sur le bassin, pour le pas de temps du fichier."""
     import h5py
@@ -277,21 +250,6 @@ def lame_bassin(contenu, emprise, surface_km2, cache_masque=None, points=None):
                                            else None if brut == nodata
                                            else round(brut * gain + offset, 3))
 
-        quoi_tmp = f["dataset1/what"].attrs
-        _dec = lambda v: v.decode() if isinstance(v, bytes) else str(v)
-        _deb = f"{_dec(quoi_tmp['startdate'])}{_dec(quoi_tmp['starttime'])}"
-        _fin = f"{_dec(quoi_tmp['enddate'])}{_dec(quoi_tmp['endtime'])}"
-        _duree = (datetime.strptime(_fin, "%Y%m%d%H%M%S")
-                  - datetime.strptime(_deb, "%Y%m%d%H%M%S")).total_seconds() / 60
-
-        # --- vignette pour l'animation, seulement s'il pleut quelque part
-        grille = None
-        if ARCHIVER_VIGNETTE and valides.any() and pluie[valides].max() > 0:
-            plein = jeu["data"][m["l0"]:m["l1"], m["c0"]:m["c1"]].astype(float)
-            plein = np.where(plein == undetect, 0.0,
-                             np.where(plein == nodata, np.nan, plein * gain + offset))
-            grille, forme = _vignette(plein, m["masque"], _duree)
-
         quoi = f["dataset1/what"].attrs
         dec = lambda v: v.decode() if isinstance(v, bytes) else str(v)
         debut = f"{dec(quoi['startdate'])}{dec(quoi['starttime'])}"
@@ -310,7 +268,6 @@ def lame_bassin(contenu, emprise, surface_km2, cache_masque=None, points=None):
         "pixels": int(valides.sum()),
         "couverture": round(float(valides.mean()), 3),
         "qualite": None if qualite is None else round(qualite, 3),
-        "grille": grille or "",
     }
     for nom, v in valeurs_points.items():
         mesure[f"pt_{nom}"] = v
@@ -322,7 +279,7 @@ def lame_bassin(contenu, emprise, surface_km2, cache_masque=None, points=None):
 # --------------------------------------------------------------------------- #
 
 COLONNES = ["instant_utc", "duree_min", "lame_mm", "lame_max_mm", "pixels",
-            "couverture", "qualite"] + [f"pt_{n}" for n in POINTS] + ["grille"]
+            "couverture", "qualite"] + [f"pt_{n}" for n in POINTS]
 
 
 def ecrire(mesure, code_bassin, dossier):
@@ -339,12 +296,26 @@ def ecrire(mesure, code_bassin, dossier):
     if mesure["instant_utc"] in existant:
         return False
 
-    existant[mesure["instant_utc"]] = {c: mesure.get(c, "") for c in COLONNES}
-    with open(chemin, "w", newline="") as f:
+    existant[mesure["instant_utc"]] = mesure
+
+    # Ecriture atomique : fichier temporaire puis remplacement. Ouvrir la cible
+    # en "w" la vide avant de savoir si l'ecriture aboutira, et une exception au
+    # milieu de la boucle laisse alors une archive reduite a son en-tete. C'est
+    # exactement ce qui est arrive le 09/09/2026 : un changement de colonnes a
+    # fait echouer DictWriter sur la premiere ligne ancienne, apres troncature,
+    # et 191 releves ont disparu. Un depot d'archive ne doit pas pouvoir perdre
+    # son contenu parce que le programme s'arrete au mauvais moment.
+    #
+    # On renormalise au passage toutes les lignes sur les colonnes courantes,
+    # pour qu'un fichier ecrit sous un schema anterieur reste relisable.
+    tmp = chemin + ".tmp"
+    with open(tmp, "w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=COLONNES)
         w.writeheader()
         for instant in sorted(existant):
-            w.writerow(existant[instant])
+            ligne = existant[instant]
+            w.writerow({c: ligne.get(c, "") for c in COLONNES})
+    os.replace(tmp, chemin)
     return True
 
 

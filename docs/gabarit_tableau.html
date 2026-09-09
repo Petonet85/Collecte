@@ -122,8 +122,13 @@ const fmt=(v,d=2)=>v==null||!isFinite(v)?"—":Number(v).toLocaleString("fr-FR",
 const cm=(v)=>(v>=0?"+":"−")+Math.abs(Math.round(v*100))+" cm";
 const css=n=>getComputedStyle(document.documentElement).getPropertyValue(n).trim();
 const dt=s=>new Date(String(s).replace(" ","T").replace(/Z?$/,"Z"));
+/* Heure locale francaise, pas UTC : la page s'adresse a quelqu'un qui regarde
+   sa propre riviere et lit l'heure sur sa montre. Les donnees restent en UTC,
+   seul l'affichage est converti — et la zone est fixee a Paris pour que la
+   lecture ne change pas selon l'appareil. */
+const ZONE="Europe/Paris";
 const fdate=d=>d instanceof Date&&!isNaN(d)
-  ? d.toLocaleString("fr-FR",{weekday:"short",day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit",timeZone:"UTC"})+" UTC" : "—";
+  ? d.toLocaleString("fr-FR",{weekday:"short",day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit",timeZone:ZONE}) : "—";
 
 const SEUILS=D.seuils, PORTE=SEUILS[0].cote, ATELIER=SEUILS[1].cote;
 const tObs=D.observe.time.map(dt), zObs=D.observe.z_rochereau;
@@ -293,9 +298,10 @@ function tracer(){
   // quelconque, collait une date contre la suivante. La forme du libelle suit
   // la place disponible : sur un ecran etroit, huit dates ecrites en toutes
   // lettres se chevauchent et ne se lisent plus.
-  const jours=[]; const j0=new Date(x0); j0.setUTCHours(0,0,0,0);
-  if(j0<x0) j0.setUTCDate(j0.getUTCDate()+1);
-  for(let d=new Date(j0); d<=x1; d.setUTCDate(d.getUTCDate()+1)) jours.push(new Date(d));
+  // Minuits locaux : une graduation qui tomberait a 2 h du matin serait illisible.
+  const jours=[]; const j0=new Date(x0); j0.setHours(0,0,0,0);
+  if(j0<x0) j0.setDate(j0.getDate()+1);
+  for(let d=new Date(j0); d<=x1; d.setDate(d.getDate()+1)) jours.push(new Date(d));
   const espace=(W-L-R)/Math.max(jours.length,1);
   const forme=espace>84?{weekday:"short",day:"2-digit",month:"2-digit"}
              :espace>50?{day:"2-digit",month:"2-digit"}
@@ -308,7 +314,7 @@ function tracer(){
     c.beginPath();c.moveTo(x+.5,T);c.lineTo(x+.5,H-B);c.stroke();c.globalAlpha=1;
     if(k%saut) return;
     c.fillStyle=css("--sourdine");
-    c.fillText(d.toLocaleDateString("fr-FR",{...forme,timeZone:"UTC"}),x,H-B+16);
+    c.fillText(d.toLocaleDateString("fr-FR",{...forme,timeZone:ZONE}),x,H-B+16);
   });
 
   c.strokeStyle=css("--encre"); c.globalAlpha=.55; c.setLineDash([3,3]); c.lineWidth=1;
@@ -329,7 +335,8 @@ function entete(){
   $("#etat").innerHTML=touche.length
     ? `<span class="dedans">Eau attendue jusqu'à ${touche.map(s=>s.nom.toLowerCase()).join(" et ")}</span>`
     : "Aucun seuil atteint";
-  $("#quand").textContent="Calculée le "+fdate(dt(D.meta.genere_le))+" · échéance "+D.meta.horizon_h+" h";
+  $("#quand").textContent="Calculée le "+fdate(dt(D.meta.genere_le))
+    +" (heure de Paris) · échéance "+D.meta.horizon_h+" h";
   document.title=(touche.length?"⚠ ":"")+"Prévision de crue à Rochereau";
 }
 function kpis(){

@@ -90,6 +90,21 @@ TAILLE_PAGE = 1000
 ATTENTES = (5, 15, 40)
 
 
+def _reecrire(chemin, entete, lignes):
+    """Reecrit un CSV d'archive sans risquer de le perdre.
+
+    Ouvrir la cible en "w" la vide avant de savoir si l'ecriture aboutira : une
+    exception au milieu de la boucle laisse une archive reduite a son en-tete.
+    On passe donc par un fichier temporaire, remplace d'un seul geste.
+    """
+    tmp = chemin + ".tmp"
+    with open(tmp, "w", newline="") as f:
+        w = csv.writer(f)
+        w.writerow(entete)
+        w.writerows(lignes)
+    os.replace(tmp, chemin)
+
+
 def _get(url, params, timeout=60):
     """GET avec reprises espacees : les API publiques coupent sous charge."""
     derniere = None
@@ -289,11 +304,8 @@ def ecrire_csv(lignes, dossier, grandeur="H", decimales=1):
         existant.update(nouvelles)
         ajouts += len(nouvelles)
 
-        with open(chemin, "w", newline="") as f:
-            w = csv.writer(f)
-            w.writerow(["instant_utc", colonne])
-            for instant in sorted(existant):
-                w.writerow([instant, round(existant[instant], decimales)])
+        _reecrire(chemin, ["instant_utc", colonne],
+                  [[i, round(existant[i], decimales)] for i in sorted(existant)])
 
     return ajouts
 
@@ -348,11 +360,8 @@ def ecrire_piezo(lignes, dossier):
             continue
         existant.update(nouvelles)
         ajouts += len(nouvelles)
-        with open(chemin, "w", newline="") as f:
-            w = csv.writer(f)
-            w.writerow(["instant_utc", "niveau_ngf"])
-            for instant in sorted(existant):
-                w.writerow([instant, round(existant[instant], 3)])
+        _reecrire(chemin, ["instant_utc", "niveau_ngf"],
+                  [[i, round(existant[i], 3)] for i in sorted(existant)])
     return ajouts
 
 
