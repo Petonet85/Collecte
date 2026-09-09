@@ -592,6 +592,7 @@ ROCHEREAU = {
         (2.640, 59.95, "repere de crue de janvier 2025"),
         (4.250, 60.95, "avril 1983, environ 1 m au-dessus de janvier 2025"),
     ],
+    "z_fond": 56.06,          # 56,16 moins les 10 cm d'eau mesures en etiage
     "seuils": {"porte de la maison": 59.35, "atelier": 59.55},
 }
 
@@ -631,22 +632,46 @@ def _pentes_monotones(x, y):
 def niveau_rochereau(h_saint_laurent, rc=None):
     """Cote NGF a Rochereau pour une hauteur a l'echelle de Saint-Laurent.
 
-    `rc` n'est plus utilise : la relation ne passe plus par un debit. Le
-    parametre reste accepte pour ne pas casser les appels existants.
+    La relation est portee par le DEBIT, pas par la hauteur amont, et c'est la
+    correction d'une erreur que la courbe rendait visible : elle annoncait 7,6 cm
+    de decrue chez vous quand Saint-Laurent ne baissait que de 1,3.
+
+    Interpoler directement en hauteur revient a diviser par la sensibilite de la
+    station amont. Or Saint-Laurent est peu sensible en basses eaux — 6,8 cm de
+    hauteur par e-fois de debit, contre 12,3 a Tiffauges — et l'inversion
+    amplifiait donc ses propres erreurs d'un facteur cinq. Le controle physique
+    le montrait : -1,3 cm a l'echelle valent -17 % de debit, donc une profondeur
+    multipliee par 0,91 chez vous, soit -1,1 cm et non -7,6.
+
+    On repasse donc par le debit, ou la relation est lisse, puis on interpole la
+    PROFONDEUR en log-log. C'est la forme physique : entre deux ancres, le
+    resultat est exactement une loi de puissance profondeur ~ Q^b. Les exposants
+    qui en sortent — 0,47 en etiage, 0,49 puis 0,43 en crue, 0,31 au-dela de
+    janvier 2025 — sont ceux d'un lit qui s'elargit, et le premier retombe sur
+    le 0,470 du calage d'origine sans qu'on le lui ait impose.
+
+    Les ancres restent stockees en hauteur, telles qu'observees, et sont
+    converties en debit par la relation de transfert en vigueur : si celle-ci est
+    recalee un jour, le bief suit sans qu'on ait a le retoucher.
     """
-    x = np.array([a[0] for a in ROCHEREAU["ancres"]], dtype=float)
-    y = np.array([a[1] for a in ROCHEREAU["ancres"]], dtype=float)
+    if rc is None:
+        rc, _, _ = relation_transfert()
+    ancres = ROCHEREAU["ancres"]
+    q_anc = np.array([float(rc.to_q(float(a[0]))) for a in ancres])
+    prof = np.array([a[1] for a in ancres], dtype=float) - ROCHEREAU["z_fond"]
+    x, y = np.log10(q_anc), np.log10(prof)
     m = _pentes_monotones(x, y)
-    q = np.atleast_1d(np.asarray(h_saint_laurent, dtype=float))
-    k = np.clip(np.searchsorted(x, q) - 1, 0, len(x) - 2)
+
+    q = np.atleast_1d(rc.to_q(np.atleast_1d(np.asarray(h_saint_laurent, dtype=float))))
+    xq = np.log10(np.clip(np.asarray(q, dtype=float), 1e-9, None))
+    k = np.clip(np.searchsorted(x, xq) - 1, 0, len(x) - 2)
     h = x[k + 1] - x[k]
-    t = (q - x[k]) / h
+    t = (xq - x[k]) / h
     v = ((2 * t ** 3 - 3 * t ** 2 + 1) * y[k] + (t ** 3 - 2 * t ** 2 + t) * h * m[k]
          + (-2 * t ** 3 + 3 * t ** 2) * y[k + 1] + (t ** 3 - t ** 2) * h * m[k + 1])
-    # Hors des ancres on prolonge par la pente du bord, faute de mieux, et la
-    # page signale que l'on sort du domaine observe.
-    return np.where(q > x[-1], y[-1] + m[-1] * (q - x[-1]),
-                    np.where(q < x[0], y[0] + m[0] * (q - x[0]), v))
+    lv = np.where(xq > x[-1], y[-1] + m[-1] * (xq - x[-1]),
+                  np.where(xq < x[0], y[0] + m[0] * (xq - x[0]), v))
+    return ROCHEREAU["z_fond"] + 10 ** lv
 
 
 def marges(z_ngf):
