@@ -1,0 +1,9 @@
+{
+ "forme": "sigma_cm = a + b * H",
+ "a": -3.468,
+ "b": 8.309,
+ "sigma_mini_cm": 1.5,
+ "R2": 0.923,
+ "mesure": "dispersion inter-episodes du residu instantane, par tranche de cote",
+ "note": "cale sur le residu a chaque instant et non sur l'erreur au pic : le faisceau doit valoir a tout moment. L'erreur au pic est plus grande (7 a 19 cm) et reste la bonne reference pour juger d'un maximum."
+}

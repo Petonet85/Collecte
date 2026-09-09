@@ -253,22 +253,60 @@ def retard_rochereau(calage: dict | None = None) -> float:
     return float(c.get("retard_h") or c["distance_km"] * 1000 / c["celerite_ms"] / 3600)
 
 
-def _historique(q_observe, t0, n_heures: int, defaut):
-    """Les `n_heures` derniers debits horaires mesures, se terminant a t0."""
+RECOUTURE_H = 6.0        # duree d'effacement du raccord mesure -> modele
+LISSAGE_CRUE_H = 3
+LISSAGE_ETIAGE_H = 25
+
+
+def _historique(q_observe, t0, n_heures: int, defaut, lissage_h: int = LISSAGE_CRUE_H):
+    """Les `n_heures` derniers debits horaires mesures, se terminant a t0.
+
+    Ces valeurs alimentent le debut de l'echeance : ce qui se manifestera bientot
+    a l'aval decoule de debits amont deja passes. On veut en retenir la
+    tendance, pas les soubresauts.
+
+    La fenetre depend du regime, parce que le bruit n'a pas la meme periode.
+
+    En crue, trois heures. Sur les crues archivees ce lissage coute de 0,3 a
+    1,7 % sur la pointe de debit, loin sous les ±15 cm d'incertitude de la
+    relation de transfert ; a cinq heures on perdrait jusqu'a 3,6 %.
+
+    En etiage, vingt-cinq heures, parce que ce qu'il faut retirer est un cycle
+    *journalier*. Les deux stations amont montrent le meme creux au meme moment,
+    minimum vers 11 h et retour la nuit : c'est l'evapotranspiration de la
+    ripisylve, qui pompe le jour et lache la nuit. Le cycle est reel, mais il
+    est local, quotidien et se referme sur lui-meme — il n'annonce rien a
+    l'aval. La courbe de tarage de l'Ouin l'amplifie enormement : 2 cm d'eau y
+    font varier le debit de 700 %. Transporte quatorze heures plus loin par un
+    retard cale sur des crues, ce cycle produisait a Saint-Laurent un creux
+    d'un centimetre vers 3 h du matin qui n'avait aucun sens. Une fenetre de
+    trois heures n'y pouvait rien : elle ne voit pas une periode de 24 h.
+    """
     idx = pd.date_range(t0 - pd.Timedelta(hours=n_heures - 1), t0, freq="h")
     if q_observe is None or not len(q_observe):
         return np.full(n_heures, defaut, dtype=float)
-    serie = q_observe.reindex(idx).interpolate(limit_direction="both")
+    serie = q_observe.rolling(lissage_h, center=True, min_periods=1).mean()
+    serie = serie.reindex(idx).interpolate(limit_direction="both")
     return np.nan_to_num(serie.to_numpy(dtype=float), nan=defaut)
 
 
-def translater(traj, q_observe, t0, retard: float, pas_h: float = 1.0):
+def translater(traj, q_observe, t0, retard: float, pas_h: float = 1.0,
+               lissage_h: int = LISSAGE_CRUE_H):
     """Decale des trajectoires de debit du retard mesure vers l'aval.
 
     Le decalage n'est pas un artifice d'affichage : sur les premieres heures de
     l'echeance, ce qui se manifestera a l'aval decoule de debits amont deja
     passes, et on les prend mesures plutot que simules. Sur ce laps, la
     prevision aval cesse de dependre de la pluie a venir.
+
+    Il faut alors recoudre. Au bout du retard, la serie change de source : elle
+    quittait la mesure pour le modele d'un seul pas de temps, et l'ecart entre
+    les deux — le biais du modele a l'instant present — sortait sous forme de
+    marche. On le rattrape donc a la couture, avec un decalage qui s'efface en
+    quelques heures : au raccord c'est la mesure qui a raison, plus loin c'est
+    le modele. Le meme decalage est applique a toutes les trajectoires, jamais
+    un decalage par membre : sinon le faisceau se pincerait a la couture, ce qui
+    ferait croire a une certitude que l'incertitude de transfert dement.
     """
     traj = np.atleast_2d(np.asarray(traj, dtype=float))
     n = traj.shape[1]
@@ -276,13 +314,59 @@ def translater(traj, q_observe, t0, retard: float, pas_h: float = 1.0):
     if retard <= 0:
         return traj.copy()
     k = int(np.ceil(retard / pas_h)) + 2
-    hist = _historique(q_observe, t0, k, float(np.median(traj[:, 0])))
+    hist = _historique(q_observe, t0, k, float(np.median(traj[:, 0])), lissage_h)
+
+    # Recouture : on corrige les trajectoires AVANT de les mettre bout a bout
+    # avec la mesure. Corriger apres coup reviendrait a appliquer l'ecart une
+    # seconde fois sur le pas qui chevauche le raccord, et creuserait la
+    # marche au lieu de la combler.
+    ecart = float(hist[-1]) - float(np.median(traj[:, 0]))
+    recolle = traj + ecart * np.exp(-(h_prev - pas_h) / RECOUTURE_H)
+    recolle = np.maximum(recolle, 0.0)
+
     axe = np.concatenate([np.arange(-(k - 1), 1) * pas_h, h_prev])
     vise = h_prev - retard
     sortie = np.empty_like(traj)
     for m in range(traj.shape[0]):
-        sortie[m] = np.interp(vise, axe, np.concatenate([hist, traj[m]]))
+        sortie[m] = np.interp(vise, axe, np.concatenate([hist, recolle[m]]))
     return sortie
+
+
+def incertitude_transfert() -> dict:
+    """Ecart-type de l'erreur de la relation de transfert, selon la cote.
+
+    Mesure par validation croisee dans caler_transfert.py : on retire un
+    episode, on recale sur les autres, on regarde l'erreur au pic. Elle croit
+    avec la cote — 6 cm en basses eaux, 19 cm pour une crue a 2,6 m — parce
+    qu'elle vient surtout de la part variable des 156 km² non jauges, dont la
+    contribution pese d'autant plus que l'episode est fort.
+    """
+    chemin = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                          "data", "calage_incertitude_transfert.json")
+    try:
+        with open(chemin, encoding="utf-8") as fh:
+            return json.load(fh)
+    except (OSError, ValueError):
+        return {"a": 4.36, "b": 5.73, "sigma_mini_cm": 1.0}
+
+
+def _bruiter_transfert(h_membres, tirage, calage):
+    """Ajoute l'erreur de la relation de transfert, une par membre.
+
+    Une seule realisation par trajectoire, tenue sur toute l'echeance, et non un
+    bruit blanc a chaque pas : la mesure montre que cette erreur est une
+    propriete de l'episode — la pluie tombe-t-elle plutot sur la partie jaugee
+    du bassin ou sur les 156 km² intermediaires — et non une agitation qui se
+    compenserait d'une heure a l'autre. Un bruit blanc ferait vibrer la courbe
+    sans elargir le faisceau la ou il faut.
+
+    Sans ce terme le faisceau etait nul sur toute la duree du retard, la ou le
+    debit amont est mesure : il annoncait une certitude que la conversion en
+    hauteur ne permet pas.
+    """
+    sigma = np.maximum(calage["a"] + calage["b"] * h_membres,
+                       calage.get("sigma_mini_cm", 1.0)) / 100.0
+    return np.maximum(h_membres + tirage * sigma, 0.0)
 
 
 def prevoir(horizon_h: int = 72, verbose: bool = True) -> dict:
@@ -333,27 +417,48 @@ def prevoir(horizon_h: int = 72, verbose: bool = True) -> dict:
     c_am = calage["amont_vers_saint_laurent"]
     log(f"propagation amont → Saint-Laurent : {tau:.1f} h pour un pic a {h_pic:.2f} m "
         f"(cale sur {c_am['n_crues']} crues, ± {c_am['ecart_type_h']:.1f} h)")
-    trajectoires = translater(trajectoires, q_amont_obs, t0, tau)
+    # Meme critere que le plafonnement du retard : sous la gamme de calage, on
+    # n'est pas en crue, et le cycle journalier doit disparaitre de l'entree.
+    bas_calage = c_am.get("h_calage", [1.0, 2.7])[0]
+    etiage = h_pic < bas_calage
+    lissage = LISSAGE_ETIAGE_H if etiage else LISSAGE_CRUE_H
+    if etiage:
+        log(f"regime d'etiage (pic attendu {h_pic:.2f} m < {bas_calage} m) : debit "
+            f"amont injecte lisse sur {lissage} h pour ecarter le cycle journalier")
+    trajectoires = translater(trajectoires, q_amont_obs, t0, tau, lissage_h=lissage)
 
     quantiles_q = {p: np.percentile(trajectoires, p, axis=0) for p in (5, 10, 25, 50, 75, 90, 95)}
-    quantiles_h = {p: courbe.to_h(v) for p, v in quantiles_q.items()}
+
+    # La conversion en hauteur a sa propre incertitude, mesuree, et elle
+    # manquait au faisceau. On la tire une fois par trajectoire, avec une graine
+    # fixe pour que deux calculs successifs ne fassent pas respirer la bande
+    # sans raison.
+    inc = incertitude_transfert()
+    tirage = np.random.default_rng(20260909).standard_normal(trajectoires.shape[0])[:, None]
+    h_membres = _bruiter_transfert(courbe.to_h(trajectoires), tirage, inc)
+    quantiles_h = {p: np.percentile(h_membres, p, axis=0) for p in (5, 10, 25, 50, 75, 90, 95)}
+    log(f"incertitude de transfert ajoutee : ± {inc['a'] + inc['b'] * float(np.median(h_membres)):.0f} cm "
+        f"a la cote actuelle, ± {inc['a'] + inc['b'] * 2.6:.0f} cm pour une crue a 2,60 m")
 
     # Rochereau est 13,2 km sous Saint-Laurent : l'eau y arrive encore plus tard.
     tau_roch = retard_rochereau(calage)
     c_ro = calage["saint_laurent_vers_rochereau"]
-    traj_roch = translater(trajectoires, None, t0, tau_roch)
-    quantiles_h_roch = {p: courbe.to_h(np.percentile(traj_roch, p, axis=0))
-                        for p in (5, 10, 25, 50, 75, 90, 95)}
+    traj_roch = translater(trajectoires, None, t0, tau_roch, lissage_h=lissage)
+    # Meme tirage : c'est la meme relation et le meme episode.
+    h_roch = _bruiter_transfert(courbe.to_h(traj_roch), tirage, inc)
+    quantiles_h_roch = {p: np.percentile(h_roch, p, axis=0) for p in (5, 10, 25, 50, 75, 90, 95)}
     log(f"propagation Saint-Laurent → Rochereau : {tau_roch:.1f} h "
         f"({c_ro['distance_km']} km a {c_ro['celerite_ms']:.2f} m/s, "
         f"cale sur {c_ro['n_crues']} crues)")
     propagation = {
         "retard_amont_h": round(tau, 1), "retard_rochereau_h": round(tau_roch, 1),
-        "h_pic_attendu_m": round(h_pic, 2),
+        "h_pic_attendu_m": round(h_pic, 2), "regime_etiage": bool(etiage),
+        "lissage_entree_h": int(lissage),
         "amont": {k: c_am[k] for k in ("a", "n", "n_crues", "R2_log", "ecart_type_h", "h_calage")
                   if k in c_am},
         "rochereau": {k: c_ro[k] for k in ("distance_km", "celerite_ms", "n_crues") if k in c_ro},
         "source": calage.get("source"),
+        "incertitude_transfert": inc,
     }
 
     q_plancher = diag_transfert["debit_plancher_m3s"]
@@ -367,7 +472,7 @@ def prevoir(horizon_h: int = 72, verbose: bool = True) -> dict:
     h_obs = hb.hourly(hb.observations_tr(CIBLE, "H", 30)).dropna()
     depassements = {
         f"T{T}": {"hauteur": seuils[T],
-                  "proba_max": round(float((courbe.to_h(trajectoires.max(axis=1)) >= seuils[T]).mean()), 3)}
+                  "proba_max": round(float((h_membres.max(axis=1) >= seuils[T]).mean()), 3)}
         for T in (2, 5, 10, 20, 50) if T in seuils
     }
     log(f"H mediane a +{horizon_h} h : {quantiles_h[50][-1]:.2f} m "
