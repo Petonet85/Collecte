@@ -427,7 +427,7 @@ function stations(){
   const S=stationsOrdonnees();
   const n=$("#note-stations"); if(!n) return;
   if(!S.length){ n.innerHTML="Prévision par station indisponible."; return; }
-  const P=D.propagation||{}, A=P.amont||{}, R=P.rochereau||{};
+  const P=D.propagation||{}, A=P.amont||{}, R=P.rochereau||{}, T=D.transfert||{};
   n.innerHTML=`Les bandes se lisent de haut en bas comme l'eau descend : la pluie, `
     +`puis <b>Saint-Mesmin</b> (359 km², 62 % du bassin), <b>l'Ouin</b> (61 km², 11 %), `
     +`<b>Saint-Laurent</b> (576 km²), enfin votre parcelle. Toutes partagent le même axe des `
@@ -456,8 +456,18 @@ function stations(){
     +`${R.n_crues||16} crues), où Rochereau se trouve à 13,2 km : `
     +`<b>${fmt(R.celerite_ms,2)} m/s</b>, soit <b>${fmt(P.retard_rochereau_h,1)} h</b>. Sur ce `
     +`bief la célérité ne dépend pas de la hauteur (p = 0,63).`
-    +`<br><br>Les stations sont en <b>hauteur d'échelle</b>, la grandeur qu'elles mesurent `
-    +`vraiment ; la prévision, calculée en débit, y est ramenée par la courbe hauteur-débit de `
+    +`<br><br><b>Saint-Laurent ne publie aucun débit</b> : sa hauteur se déduit du débit amont `
+    +`par une relation calée, elle aussi, sur les chroniques instantanées — `
+    +`${T.n_couples?fmt(T.n_couples/1000,0)+" 000":"170 000"} couples réellement simultanés sur `
+    +`${T.n_episodes||40} épisodes, débit amont ramené à l'heure où il se manifeste à l'aval. `
+    +`Elle est tabulée et non ajustée : le lit déborde, la section change de nature, et un `
+    +`exposant unique se tromperait aux deux bouts. Validée en retirant un épisode à la fois, `
+    +`elle suit l'hydrogramme à <b>${fmt(Math.abs(T.validation_biais_m*100),1)} cm</b> près en `
+    +`moyenne ; <b>au pic, comptez ± ${fmt(T.validation_ecart_type_m*100,0)} cm</b> — cette `
+    +`dispersion-là ne vient pas de la relation mais de la part variable des 156 km² non jaugés `
+    +`selon les épisodes, et la version précédente ne faisait pas mieux.`
+    +`<br><br>Les stations amont sont en <b>hauteur d'échelle</b>, la grandeur qu'elles mesurent `
+    +`vraiment ; leur prévision, calculée en débit, y est ramenée par la courbe hauteur-débit de `
     +`chaque station, construite sur ses propres couples publiés — fidèle au centimètre en `
     +`basses eaux, plus lâche en crue où la relation dépend de l'événement. Chaque bande garde `
     +`son échelle verticale — ce sont des rivières de tailles différentes. `

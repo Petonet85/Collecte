@@ -152,21 +152,36 @@ def assembler(prevision: dict, horizon_h: int = 72) -> dict:
     mnt = json.load(open(os.path.join(DOCS, "mnt_fin.json"), encoding="utf-8"))
     points = [(mnt["centre"][0], mnt["centre"][1])]
 
-    # --- observe : on part du DEBIT amont, mesure en temps reel, et non de la
-    # hauteur a Saint-Laurent. La relation hauteur-debit de cette station n'est
-    # calee qu'au-dessus de 0,80 m ; en etiage elle renvoie un debit nul et la
-    # cote se fige au fond du lit, ce qui donne une courbe plate et fausse.
+    # --- observe : la cote a Rochereau se lit sur la hauteur MESUREE a
+    # Saint-Laurent, decalee du temps de parcours du bief — ce qui passe chez
+    # vous maintenant est passe devant l'echelle 2,3 h plus tot. C'est le chemin
+    # le plus court : une mesure, un retard cale, une relation calee.
+    #
+    # Il passait auparavant par le debit amont, parce que la relation
+    # hauteur-debit de Saint-Laurent, ajustee sur les seuls maxima mensuels
+    # au-dessus de 0,80 m, s'aplatissait en etiage et figeait la cote au fond du
+    # lit. La table calee sur 170 000 couples instantanes descend a 0,49 m : le
+    # detour n'a plus lieu d'etre, et il avait le defaut d'ignorer le retard.
     t0 = pd.Timestamp(prevision["date_prevision"].replace(" ", "T").rstrip("Z"))
+    h_obs = hb.hourly(hb.observations_tr("M703243010", "H", 20)).dropna()
+    h_obs = h_obs.loc[t0 - pd.Timedelta(days=12):]
+    tau_bief = sevre.retard_rochereau()
+    h_bief = h_obs.copy()
+    h_bief.index = h_bief.index + pd.Timedelta(hours=tau_bief)
+    # Les premieres heures n'ont pas d'antecedent : on les comble par la mesure
+    # la plus proche plutot que de laisser un trou en tete de courbe.
+    h_bief = h_bief.reindex(h_obs.index, method="nearest",
+                            tolerance=pd.Timedelta(minutes=90)).ffill().bfill()
+    z_obs = (sevre.niveau_rochereau(h_bief.to_numpy(dtype=float), courbe)
+             if len(h_bief) else np.array([]))
+
+    # Le debit amont mesure reste affiche : c'est lui qui porte la prevision.
     q_amont = None
     for site in ("M7022410", "M7044010"):
         q = hb.hourly(hb.observations_tr(site, "Q", 20)).dropna()
         q_amont = q if q_amont is None else q_amont.add(q, fill_value=0.0)
-    q_amont = q_amont.loc[t0 - pd.Timedelta(days=12):] if q_amont is not None else pd.Series(dtype=float)
-    z_obs = (sevre.ROCHEREAU["z_fond"]
-             + sevre.ROCHEREAU["a"] * np.maximum(q_amont.to_numpy(dtype=float), 0.0)
-             ** sevre.ROCHEREAU["b"]) if len(q_amont) else np.array([])
-    h_obs = hb.hourly(hb.observations_tr("M703243010", "H", 20)).dropna()
-    h_obs = h_obs.reindex(q_amont.index).interpolate(limit=3) if len(q_amont) else h_obs
+    q_amont = (q_amont.reindex(h_obs.index).interpolate(limit=3)
+               if q_amont is not None else pd.Series(index=h_obs.index, dtype=float))
 
     radar = pluie_radar(t0)
     modele = pluie_modele(points)
@@ -184,11 +199,13 @@ def assembler(prevision: dict, horizon_h: int = 72) -> dict:
         },
         "seuils": calage["seuils_propriete"],
         "propagation": prevision.get("propagation"),
+        "transfert": prevision.get("transfert"),
         "scenarios": [s for s in calage["scenarios"] if not s.get("ancre")],
         "reperes": [s for s in calage["scenarios"] if s.get("ancre")],
         "observe": {
             "time": [d.isoformat() for d in q_amont.index],
-            "q_amont": [round(float(v), 3) for v in q_amont.to_numpy()],
+            "q_amont": [None if not np.isfinite(v) else round(float(v), 3)
+                        for v in q_amont.to_numpy()],
             "h_echelle": [None if not np.isfinite(v) else round(float(v), 3)
                           for v in h_obs.to_numpy()],
             "z_rochereau": [round(float(v), 3) for v in z_obs],

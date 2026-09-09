@@ -50,18 +50,102 @@ def _elabore(site: str, grandeur: str, diviseur: float = 1000.0) -> pd.Series:
     return s[~s.index.duplicated(keep="last")]
 
 
-def relation_transfert(seuil_h: float = 0.8, fin_calage: str = "2020-01-01"):
-    """Ajuste Q_amont -> H_aval sur les maxima mensuels, et la valide hors periode.
+class CourbeTransfert:
+    """Relation debit amont <-> hauteur a Saint-Laurent, tabulee et monotone.
 
-    L'ajustement se fait dans le sens d'une courbe de tarage (Q en fonction de H)
-    puis s'inverse : le debit couvre trois ordres de grandeur la ou la hauteur
-    n'en couvre qu'un, ce qui donne aux crues le poids qu'elles doivent avoir.
-    Ajuster dans l'autre sens laisse les basses eaux, dix fois plus nombreuses,
-    imposer un exposant non physique et sous-estimer chaque crue.
+    Tabulee plutot qu'ajustee : la relation n'est pas une loi de puissance. Le
+    lit deborde, la section change de nature, et un exposant unique impose sur
+    trois ordres de grandeur de debit se trompe aux deux bouts a la fois.
+    Monotone par construction, donc exactement inversible — ce qui compte, la
+    chaine faisant l'aller-retour hauteur/debit pour atteindre Rochereau.
 
-    Seuls les mois depassant `seuil_h` entrent dans le calage : la relation ne
-    sert qu'a prevoir des crues, et l'etiage n'y apporte que du bruit.
+    Hors du domaine mesure on prolonge par la pente locale en log-debit. C'est
+    une extrapolation et rien d'autre ; au-dela, le calage de Rochereau reprend
+    la main en ancrant sur la crue de 1983.
     """
+
+    def __init__(self, q, h, meta: dict | None = None):
+        self.q = np.asarray(q, dtype=float)
+        self.h = np.asarray(h, dtype=float)
+        self.meta = meta or {}
+
+    @staticmethod
+    def _rendre(sortie, scalaire):
+        return float(sortie[0]) if scalaire else sortie
+
+    def to_h(self, q):
+        scalaire = np.ndim(q) == 0
+        q = np.atleast_1d(np.asarray(q, dtype=float))
+        lq = np.log10(np.clip(q, 1e-6, None))
+        out = np.interp(lq, np.log10(self.q), self.h)
+        haut = q > self.q[-1]
+        if np.any(haut):
+            pente = (self.h[-1] - self.h[-2]) / (np.log10(self.q[-1]) - np.log10(self.q[-2]))
+            out = np.where(haut, self.h[-1] + pente * (lq - np.log10(self.q[-1])), out)
+        return self._rendre(out, scalaire)
+
+    def to_q(self, h):
+        scalaire = np.ndim(h) == 0
+        h = np.atleast_1d(np.asarray(h, dtype=float))
+        out = 10 ** np.interp(h, self.h, np.log10(self.q))
+        haut = h > self.h[-1]
+        if np.any(haut):
+            pente = (np.log10(self.q[-1]) - np.log10(self.q[-2])) / (self.h[-1] - self.h[-2])
+            out = np.where(haut, 10 ** (np.log10(self.q[-1]) + pente * (h - self.h[-1])), out)
+        return self._rendre(out, scalaire)
+
+
+def calage_transfert() -> dict | None:
+    chemin = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                          "data", "calage_transfert.json")
+    try:
+        with open(chemin, encoding="utf-8") as fh:
+            return json.load(fh)
+    except (OSError, ValueError):
+        return None
+
+
+def relation_transfert(seuil_h: float = 0.8, fin_calage: str = "2020-01-01"):
+    """Relation debit amont <-> hauteur a Saint-Laurent.
+
+    Elle vient d'abord de data/calage_transfert.json : 170 000 couples
+    reellement simultanes, tires des chroniques instantanees de HydroPortail sur
+    27 crues et 14 etiages, le debit amont etant ramene a l'heure ou il se
+    manifeste a l'aval grace au retard cale par ailleurs. Voir caler_transfert.py.
+
+    Sans ce fichier on retombe sur l'ajustement historique, sur les maxima
+    mensuels. Il avait deux faiblesses que la version tabulee corrige. Les deux
+    maxima d'un mois ne sont pas forcement le meme evenement, ce qui appariait
+    parfois une pointe amont avec une crue aval venue d'ailleurs. Et il ne
+    couvrait rien sous 0,80 m : la relation s'y aplatissait et rendait une
+    hauteur constante, incapable de reproduire l'etiage du jour, ce qui obligeait
+    le tableau de bord a la contourner.
+    """
+    cal = calage_transfert()
+    if cal:
+        courbe = CourbeTransfert(cal["q"], cal["h"], cal)
+        v = cal.get("validation", {})
+        diagnostic = {
+            "forme": cal.get("forme", "table monotone"),
+            "formule": (f"table de {len(cal['q'])} noeuds, "
+                        f"Q {cal['domaine_q'][0]}–{cal['domaine_q'][1]} m³/s"),
+            "R2": None,
+            "n_couples": cal.get("n_couples"),
+            "n_episodes": cal.get("n_episodes"),
+            "domaine_h": cal.get("domaine_h"),
+            "domaine_q": cal.get("domaine_q"),
+            # Validation croisee par episode : biais et dispersion en metres,
+            # sous les memes cles que l'ancien diagnostic pour ne rien casser.
+            "validation_n_crues": v.get("n_episodes"),
+            "validation_biais_m": round((v.get("table_biais_cm") or 0.0) / 100, 3),
+            "validation_ecart_type_m": round((v.get("table_pic_ecart_type_cm") or 0.0) / 100, 3),
+            "validation_pic_biais_m": round((v.get("table_pic_biais_cm") or 0.0) / 100, 3),
+            "hauteur_plancher_m": cal["domaine_h"][0],
+            "debit_plancher_m3s": cal["domaine_q"][0],
+            "source": cal.get("source"),
+        }
+        return courbe, None, diagnostic
+
     h = _elabore(SITE_CIBLE, "HIXM")
     q_amont = sum(_elabore(code[:8], "QIXM") for code in AMONT)
     df = pd.DataFrame({"H": h, "Q": q_amont}).dropna()
@@ -208,10 +292,10 @@ def prevoir(horizon_h: int = 72, verbose: bool = True) -> dict:
             print(f"  [sevre] {msg}", flush=True)
 
     courbe, maxima, diag_transfert = relation_transfert()
-    log(f"transfert : {diag_transfert['formule']} (R²={diag_transfert['R2']}), "
-        f"validation {diag_transfert['validation_biais_m']:+.3f} "
-        f"± {diag_transfert['validation_ecart_type_m']:.3f} m sur "
-        f"{diag_transfert['validation_n_crues']} crues")
+    log(f"transfert : {diag_transfert['formule']}"
+        + (f" (R²={diag_transfert['R2']})" if diag_transfert.get("R2") else "")
+        + f", validation croisee {diag_transfert['validation_biais_m']:+.3f} m "
+          f"sur {diag_transfert['validation_n_crues']} episodes")
 
     seuils = seuils_hauteur()
     log(f"seuils : {seuils['n_annees']} maxima annuels — "

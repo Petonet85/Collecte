@@ -35,6 +35,7 @@ def construire(horizon_h=72, verbose=True):
         "time": res["time"],
         "h_saint_laurent": res["H"],
         "propagation": res.get("propagation"),
+        "transfert": res.get("transfert"),
         "observe_h": res["observe"]["H"][-1] if res["observe"]["H"] else None,
         "genere_le": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "z_rochereau": {},
