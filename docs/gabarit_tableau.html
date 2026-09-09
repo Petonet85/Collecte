@@ -185,12 +185,26 @@ function tracer(){
      la courbe du moment sans qu'on comprenne pourquoi. */
   const visible=(temps,valeurs)=>valeurs.filter((v,i)=>
     v!=null&&isFinite(v)&&temps[i]>=x0&&temps[i]<=x1);
+
+  /* Au-dela de vingt jours, le temps reel ne suffit plus : on bascule sur la
+     chronique journaliere tiree de HydroPortail. Chaque journee y est resumee
+     par son minimum et son maximum, jamais par sa moyenne — a cette echelle un
+     pic de crue dure quelques heures, et une moyenne l'effacerait alors que
+     c'est precisement ce qu'on vient voir. */
+  const LONG=joursPasses>20, HIST=D.historique||{};
+  const jour=t=>new Date(t+"T12:00:00Z");
+  const chronique=code=>{
+    const h=LONG&&HIST.stations&&HIST.stations[code];
+    return h?{t:h.time.map(jour),lo:h.min,hi:h.max,jour:true}:null;
+  };
   const X=d=>L+(d-x0)/(x1-x0)*(W-L-R);
   const bandes=[];
 
   /* --- pluie, axe inverse en haut */
   const rad=D.pluie.radar, ana=D.pluie.analyse, pv=D.pluie.prevue;
-  const toutes=[...(rad.mm||[]),...(ana.mm||[]),...(pv?pv.p90:[])].filter(v=>v!=null&&isFinite(v));
+  const toutes=(LONG&&HIST.pluie
+    ? HIST.pluie.mm.filter((v,i)=>jour(HIST.pluie.time[i])>=x0)
+    : [...(rad.mm||[]),...(ana.mm||[]),...(pv?pv.p90:[])]).filter(v=>v!=null&&isFinite(v));
   const pmax=Math.max(0.8,...toutes);
   const RY=v=>T+hPluie-(v/pmax)*hPluie;
   const bw=Math.max(1.6,(W-L-R)/((x1-x0)/36e5)*0.86);
@@ -198,6 +212,11 @@ function tracer(){
   const barre=(t,v,couleur,alpha)=>{ if(v==null||!(v>0))return;
     c.globalAlpha=alpha; c.fillStyle=couleur;
     c.fillRect(X(t)-bw/2,RY(v),bw,T+hPluie-RY(v)); c.globalAlpha=1; };
+  if(LONG&&HIST.pluie){
+    // Sur un an, la pluie horaire n'est ni lisible ni disponible : on montre les
+    // cumuls journaliers, qui sont ce qui explique les crues qu'on regarde.
+    HIST.pluie.time.forEach((t,i)=>barre(jour(t),HIST.pluie.mm[i],css("--analyse"),.85));
+  } else
   ana.time.forEach((s,i)=>barre(dt(s),ana.mm[i],css("--analyse"),.85));
   if(pv){ pv.time.forEach((s,i)=>barre(dt(s),pv.p90[i],css("--prev"),.34));
           pv.time.forEach((s,i)=>barre(dt(s),pv.p50[i],css("--prev"),.95)); }
@@ -206,7 +225,7 @@ function tracer(){
   c.strokeStyle=css("--trait"); c.lineWidth=1;
   c.beginPath(); c.moveTo(L,T+hPluie+.5); c.lineTo(W-R,T+hPluie+.5); c.stroke();
   c.fillStyle=css("--sourdine"); c.font="10px "+css("--mono"); c.textAlign="right";
-  c.fillText(fmt(pmax,1)+" mm/h",L-6,T+10); c.fillText("0",L-6,T+hPluie);
+  c.fillText(fmt(pmax,1)+(LONG&&HIST.pluie?" mm/j":" mm/h"),L-6,T+10); c.fillText("0",L-6,T+hPluie);
   c.textAlign="left"; c.font="600 11px "+css("--titre");
   c.fillText("PLUIE SUR LE BASSIN",L+6,T+11);
 
@@ -219,9 +238,11 @@ function tracer(){
 
   ST.forEach((st,k)=>{
     const yT=T+hPluie+gap+k*(hSt+gap), yB=yT+hSt;
-    const tO=st.observe.time.map(dt), vO=st.observe.v;
+    const H_=chronique(st.code);
+    const tO=H_?H_.t:st.observe.time.map(dt), vO=H_?H_.hi:st.observe.v;
     const tp=st.prevu.time.map(dt), Q=st.prevu.q;
-    const vals=[...visible(tO,vO),...visible(tp,Q["5"]||[]),...visible(tp,Q["95"]||[])];
+    const vals=[...visible(tO,vO),...(H_?visible(H_.t,H_.lo):[]),
+                ...visible(tp,Q["5"]||[]),...visible(tp,Q["95"]||[])];
     if(!vals.length) return;
     let lo=Math.min(...vals),hi=Math.max(...vals);
     const pad=Math.max((hi-lo)*.18,.02); lo-=pad; hi+=pad;
@@ -244,7 +265,13 @@ function tracer(){
       Q[a].forEach((v,i)=>{const x=X(tp[i]),y=Y(v); i?c.lineTo(x,y):c.moveTo(x,y);});
       for(let i=Q[b].length-1;i>=0;i--) c.lineTo(X(tp[i]),Y(Q[b][i]));
       c.closePath(); c.fill(); });
-    ligne(tO,vO,Y,css("--obs"),1.7);
+    if(H_){   // enveloppe du jour : min a max, le trait suivant le maximum
+      c.fillStyle=css("--b2"); c.beginPath();
+      H_.t.forEach((t,i)=>{const x=X(t),y=Y(H_.hi[i]); i?c.lineTo(x,y):c.moveTo(x,y);});
+      for(let i=H_.t.length-1;i>=0;i--) c.lineTo(X(H_.t[i]),Y(H_.lo[i]));
+      c.closePath(); c.fill();
+    }
+    ligne(tO,vO,Y,css("--obs"),H_?1.2:1.7);
     if(Q["50"]) ligne(tp,Q["50"],Y,css("--med"),2);
     c.restore();
     c.strokeStyle=css("--trait"); c.lineWidth=1;
@@ -259,7 +286,11 @@ function tracer(){
   // L'echelle suit l'eau, pas les seuils : en etiage ils sont trois metres plus
   // haut, et les inclure ecraserait la courbe contre le bord. Un seuil hors
   // champ est alors signale en marge, avec sa distance.
-  let eau=[...visible(tObs,zObs),...visible(tPrev,Zq["5"]),...visible(tPrev,Zq["95"])];
+  const HR=LONG&&HIST.z_rochereau?{t:HIST.z_rochereau.time.map(jour),
+                                  lo:HIST.z_rochereau.min,hi:HIST.z_rochereau.max}:null;
+  const tObsA=HR?HR.t:tObs, zObsA=HR?HR.hi:zObs;
+  let eau=[...visible(tObsA,zObsA),...(HR?visible(HR.t,HR.lo):[]),
+           ...visible(tPrev,Zq["5"]),...visible(tPrev,Zq["95"])];
   if(!eau.length) eau=[...zObs,...Zq["50"]].filter(v=>v!=null&&isFinite(v));
   let lo=Math.min(...eau),hi=Math.max(...eau);
   // Crue de reference choisie : l'echelle s'ouvre pour la contenir. La courbe du
@@ -323,7 +354,13 @@ function tracer(){
                  W-R-4, (hautDessus?yH+13:yB-6)+k*14);
     });
   }
-  ligne(tObs,zObs,Y,css("--obs"),1.9);
+  if(HR){
+    c.fillStyle=css("--b2"); c.beginPath();
+    HR.t.forEach((t,i)=>{const x=X(t),y=Y(HR.hi[i]); i?c.lineTo(x,y):c.moveTo(x,y);});
+    for(let i=HR.t.length-1;i>=0;i--) c.lineTo(X(HR.t[i]),Y(HR.lo[i]));
+    c.closePath(); c.fill();
+  }
+  ligne(tObsA,zObsA,Y,css("--obs"),HR?1.3:1.9);
   ligne(tPrev,Zq["50"],Y,css("--med"),2.2);
   c.restore();
   c.strokeStyle=css("--trait"); c.lineWidth=1;
@@ -548,11 +585,16 @@ function fenetre(){
   const debuts=[...(D.stations||[]).map(s=>s.observe.time[0]),D.observe.time[0]]
     .filter(Boolean).map(dt);
   const dispo=debuts.length?(t0-Math.max(...debuts.map(Number)))/864e5:5;
-  const choix=[1,2,3,5,7,10,15,20].filter(j=>j<=dispo+0.5);
+  const hs=(D.historique||{}).stations||{};
+  const jours=Object.values(hs).map(v=>v.time.length).sort((a,b)=>a-b);
+  const dispoLong=jours.length?jours[0]:0;   // la serie la plus courte fait foi
+  const choix=[1,2,3,5,7,10,15,20].filter(j=>j<=dispo+0.5)
+    .concat([30,90,365].filter(j=>j<=dispoLong+1));
   if(!choix.length) choix.push(Math.max(Math.floor(dispo),1));
   if(!choix.includes(joursPasses)) joursPasses=choix[choix.length-1];
+  const nom=j=>j===365?"1 an":j===90?"3 mois":j===30?"1 mois":`${j} jour${j>1?"s":""}`;
   sel.innerHTML=choix.map(j=>`<option value="${j}"${j===joursPasses?" selected":""}>`
-    +`${j} jour${j>1?"s":""}</option>`).join("");
+    +`${nom(j)}${j>20?" · relevés journaliers":""}</option>`).join("");
   sel.onchange=e=>{ joursPasses=+e.target.value; tracer(); };
 }
 function crues(){
