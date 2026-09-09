@@ -331,7 +331,9 @@ def run(ctx: Context, horizon_h: int = 72, n_noise: int = 3,
     horizons = np.arange(1, horizon_h + 1)
 
     # --- 8. Correction d'erreur + bruit residuel
-    members = members * err.correction(horizons)[None, :]
+    # La correction depend du debit simule : le biais d'etiage ne doit pas
+    # survivre a une crue (voir ErrorModel.poids_regime).
+    members = members * err.correction(horizons[None, :], q_modele=members)
     spread = err.spread(horizons)
     rng = np.random.default_rng(42)
     noisy = np.vstack([
