@@ -306,6 +306,7 @@ def run(ctx: Context, horizon_h: int = 72, n_noise: int = 3,
     err = assim.fit(q_obs.loc[tail].reindex(q_sim_past.loc[tail].index).values,
                     q_sim_past.loc[tail].values, sigma_floor=sigma_floor)
     log(f"erreur AR(1) : rho={err.rho:.3f}, biais actuel {100*(np.exp(err.e0)-1):+.0f} %, "
+        f"biais persistant {100*(np.exp(err.e_moy)-1):+.0f} %, "
         f"sigma_log={err.sigma:.2f} (plancher long terme {sigma_floor:.2f})")
 
     # --- 7. Ensemble de pluie -> ensemble de debit
