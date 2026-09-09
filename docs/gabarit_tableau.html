@@ -427,22 +427,35 @@ function stations(){
   const S=stationsOrdonnees();
   const n=$("#note-stations"); if(!n) return;
   if(!S.length){ n.innerHTML="Prévision par station indisponible."; return; }
-  const P=D.propagation, tr=P?P.trajets:null;
-  const retard=c=>tr&&tr[c]?`${fmt(tr[c].retard_h,1)} h`:"—";
+  const P=D.propagation||{}, A=P.amont||{}, R=P.rochereau||{};
   n.innerHTML=`Les bandes se lisent de haut en bas comme l'eau descend : la pluie, `
     +`puis <b>Saint-Mesmin</b> (359 km², 62 % du bassin), <b>l'Ouin</b> (61 km², 11 %), `
     +`<b>Saint-Laurent</b> (576 km²), enfin votre parcelle. Toutes partagent le même axe des `
     +`temps : une verticale traverse la figure entière, ce qui donne directement le décalage `
     +`entre la montée à l'amont et son arrivée à l'aval.`
-    +`<br><br><b>Temps de parcours.</b> L'eau met du temps à descendre, et la prévision en tient `
-    +`compte : ${retard("M702241010")} de Saint-Mesmin à Saint-Laurent (30,8 km de rivière), `
-    +`${retard("M704401010")} de l'Ouin (18,1 km), puis ${retard("rochereau")} de plus jusqu'à `
-    +`Rochereau (13,2 km). Distances mesurées le long du cours d'eau sur le réseau BD TOPO de `
-    +`l'IGN — à vol d'oiseau on raccourcirait le trajet de 30 %. La célérité de l'onde de crue `
-    +`retenue est de ${P?fmt(P.celerite_ms,1):"1,2"} m/s, valeur prudente et <b>pas encore calée</b> : il y faudra `
-    +`une vraie crue archivée au pas horaire. Les ${P?Math.round(P.part_intermediaire*100):27} % du bassin `
-    +`situés entre les stations et Saint-Laurent ne font pas ce trajet et arrivent sans retard ; `
-    +`ils sont comptés à part.`
+    +`<br><br><b>Temps de propagation, calé sur les crues passées.</b> Le retard entre le débit `
+    +`amont et la cote à Saint-Laurent a été mesuré sur <b>${A.n_crues||17} crues depuis 2010</b> `
+    +`(chroniques instantanées HydroPortail). Il n'est pas constant : il décroît quand la crue `
+    +`grossit, de 14 h pour un petit épisode à 9 h pour une crue majeure — versants saturés et `
+    +`lit plein rendent l'eau plus vite. Pour le pic actuellement attendu `
+    +`(${fmt(P.h_pic_attendu_m,2)} m), la chaîne applique <b>${fmt(P.retard_amont_h,1)} h</b>, `
+    +`à ± ${fmt(A.ecart_type_h,1)} h près.`
+    +((A.h_calage && P.h_pic_attendu_m < A.h_calage[0])
+      ? ` Ce pic est <b>sous la gamme de calage</b> (${fmt(A.h_calage[0],2)}–${fmt(A.h_calage[1],2)} m) : `
+        +`le retard est plafonné à sa valeur de bas de gamme plutôt qu'extrapolé, la loi de `
+        +`puissance divergeant là où aucune crue ne l'a vérifiée.`
+      : "")
+    +`<br><br>Ce retard n'est pas un temps de trajet : le pic de l'Ouin précède celui de `
+    +`Saint-Laurent de 14 à 24 h alors que l'Ouin n'est qu'à 18 km, ce qui donnerait une onde à `
+    +`0,2 m/s — impossible. C'est que l'Ouin est un bassin nerveux de 61 km² qui culmine tôt, `
+    +`quand Saint-Laurent, dix fois plus grand, met bien plus longtemps à rassembler son eau. Le `
+    +`décalage mêle donc le trajet et l'écart de réponse entre bassins, et c'est bien ce mélange `
+    +`qu'il faut appliquer.`
+    +`<br><br>De Saint-Laurent à Rochereau, en revanche, c'est un vrai temps de parcours. Faute `
+    +`de station chez vous, il est mesuré sur le bief Saint-Laurent — <b>Tiffauges</b> (25,1 km, `
+    +`${R.n_crues||16} crues), où Rochereau se trouve à 13,2 km : `
+    +`<b>${fmt(R.celerite_ms,2)} m/s</b>, soit <b>${fmt(P.retard_rochereau_h,1)} h</b>. Sur ce `
+    +`bief la célérité ne dépend pas de la hauteur (p = 0,63).`
     +`<br><br>Les stations sont en <b>hauteur d'échelle</b>, la grandeur qu'elles mesurent `
     +`vraiment ; la prévision, calculée en débit, y est ramenée par la courbe hauteur-débit de `
     +`chaque station, construite sur ses propres couples publiés — fidèle au centimètre en `

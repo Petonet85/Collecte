@@ -1,0 +1,24 @@
+{
+ "amont_vers_saint_laurent": {
+  "forme": "retard_h = a / H_pic^n",
+  "a": 14.455,
+  "n": 0.469,
+  "n_crues": 17,
+  "R2_log": 0.458,
+  "ecart_type_h": 1.21,
+  "h_calage": [
+   1.03,
+   2.63
+  ]
+ },
+ "saint_laurent_vers_rochereau": {
+  "forme": "distance / celerite",
+  "distance_km": 13.2,
+  "celerite_ms": 1.626,
+  "ecart_type_celerite_ms": 0.288,
+  "retard_h": 2.26,
+  "n_crues": 16,
+  "mesure_sur": "Saint-Laurent -> Tiffauges, 25.1 km, retard 4.41 h"
+ },
+ "source": "HydroPortail, chroniques instantanees, crues depuis 2010"
+}
