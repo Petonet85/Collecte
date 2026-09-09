@@ -19,6 +19,8 @@ import numpy as np
 import pandas as pd
 import requests
 
+from ancrage import raccorder_quantiles
+
 BASE = os.path.dirname(os.path.abspath(__file__))
 DOCS = os.path.join(BASE, "docs")
 BASSIN_RADAR = "M703243010"
@@ -87,23 +89,29 @@ def _stations(prevision, h_saint_laurent, q_amont):
     elle seule 62 % du bassin amont : c'est la que la prevision se confronte
     a une mesure de meme nature.
     """
-    out = []
-    out.append({
+    def dernier(valeurs):
+        valides = [v for v in valeurs if v is not None and np.isfinite(v)]
+        return valides[-1] if valides else None
+
+    obs_sl = [None if not np.isfinite(x) else round(float(x), 3)
+              for x in h_saint_laurent.to_numpy()]
+    out = [{
         "code": "M703243010", "nom": "Sèvre Nantaise à Saint-Laurent-sur-Sèvre",
-        "grandeur": "hauteur", "unite": "m", "decimales": 2,
-        "surface_km2": 576,
-        "observe": {"time": [d.isoformat() for d in h_saint_laurent.index],
-                    "v": [None if not np.isfinite(x) else round(float(x), 3)
-                          for x in h_saint_laurent.to_numpy()]},
-        "prevu": {"time": prevision["time"], "q": prevision["h_saint_laurent"]},
-    })
+        "grandeur": "hauteur", "unite": "m", "decimales": 2, "surface_km2": 576,
+        "observe": {"time": [d.isoformat() for d in h_saint_laurent.index], "v": obs_sl},
+        "prevu": {"time": prevision["time"],
+                  "q": raccorder_quantiles(prevision["h_saint_laurent"], dernier(obs_sl),
+                                           horizon_decroissance_h=22.0, plafond=0.5)},
+    }]
     for code, bloc in (prevision.get("stations") or {}).items():
         obs = bloc["observe"]
         out.append({
             "code": code, "nom": bloc["nom"], "grandeur": "débit", "unite": "m³/s",
             "decimales": 2, "surface_km2": bloc["surface_km2"],
             "observe": {"time": obs["time"], "v": obs["Q"]},
-            "prevu": {"time": bloc["time"], "q": bloc["Q"]},
+            "prevu": {"time": bloc["time"],
+                      "q": raccorder_quantiles(bloc["Q"], dernier(obs["Q"]),
+                                               horizon_decroissance_h=20.0)},
         })
     return out
 
@@ -160,7 +168,10 @@ def assembler(prevision: dict, horizon_h: int = 72) -> dict:
         },
         "prevision": {
             "time": prevision["time"],
-            "z_rochereau": prevision["z_rochereau"],
+            "z_rochereau": raccorder_quantiles(
+                prevision["z_rochereau"],
+                float(z_obs[-1]) if len(z_obs) else None,
+                horizon_decroissance_h=22.0, plafond=0.5),
             "h_echelle": prevision["h_saint_laurent"],
         },
         "pluie": {
