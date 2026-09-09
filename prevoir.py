@@ -40,7 +40,7 @@ def construire(horizon_h=72, verbose=True):
     }
     for quantile, valeurs in res["H"].items():
         cotes = sevre.niveau_rochereau(np.asarray(valeurs, dtype=float), courbe)
-        prevision["z_rochereau"][quantile] = [round(float(v), 3) for v in cotes]
+        prevision["z_rochereau"][quantile] = [round(float(v), 4) for v in cotes]
 
     # Debit prevu station par station : Saint-Mesmin porte a lui seul 62 % du
     # bassin de Saint-Laurent, et c'est la seule des deux ou l'on dispose d'une

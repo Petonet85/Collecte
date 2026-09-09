@@ -416,6 +416,21 @@ def _upstream_series(ctx: Context) -> tuple[dict[str, pd.Series], list[str]]:
     return ups, used
 
 
+def _sig(x, chiffres: int = 4):
+    """Arrondi a un nombre de chiffres significatifs plutot qu'a des decimales.
+
+    Deux decimales conviennent a une crue de 200 m3/s et detruisent l'etiage :
+    a 0,06 m3/s le pas d'arrondi vaut 15 % du debit, ce qui se lit a l'ecran
+    comme un escalier que le modele n'a jamais produit. Un nombre fixe de
+    chiffres significatifs garde la meme finesse relative a toutes les eaux.
+    """
+    out = []
+    for v in np.asarray(x, dtype=float).ravel():
+        out.append(float(v) if not np.isfinite(v) or v == 0
+                   else float(f"%.{chiffres}g" % v))
+    return out
+
+
 def _assemble(ctx, t0, idx, qs, det_q, noisy, q_obs, h_obs, q_sim_past, met_h, ens,
               err, prop_model, weights, piezo, nappe, up_used) -> dict:
     b = ctx.basin
@@ -458,17 +473,17 @@ def _assemble(ctx, t0, idx, qs, det_q, noisy, q_obs, h_obs, q_sim_past, met_h, e
         },
         "observe": {
             "time": [d.isoformat() for d in obs_win.index],
-            "Q": list(np.round(obs_win.to_numpy(), 2)),
+            "Q": _sig(obs_win.to_numpy()),
             "H": list(np.round(h_win.to_numpy(), 3)),
             "H_time": [d.isoformat() for d in h_win.index],
-            "Q_simule": list(np.round(sim_win.reindex(obs_win.index).to_numpy(), 2)),
+            "Q_simule": _sig(sim_win.reindex(obs_win.index).to_numpy()),
         },
         "prevision": {
             "time": [d.isoformat() for d in idx],
-            "Q": {str(p): list(np.round(v, 2)) for p, v in qs.items()},
+            "Q": {str(p): _sig(v) for p, v in qs.items()},
             "H": {str(p): to_h(v) for p, v in qs.items()} if rc else {},
-            "Q_deterministe": list(np.round(det_q, 2)),
-            "membres": [list(np.round(m, 2)) for m in subset],
+            "Q_deterministe": _sig(det_q),
+            "membres": [_sig(m) for m in subset],
             "poids_propagation": list(np.round(weights, 3)),
         },
         "pluie": {

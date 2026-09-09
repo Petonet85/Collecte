@@ -60,7 +60,6 @@ tr.repere td{color:var(--seuil)}
 .note{font-size:12.5px;color:var(--sourdine);line-height:1.55}
 .dedans{color:var(--alerte);font-weight:600}
 .scroll{overflow-x:auto}
-#stations-hote{position:relative}
   border:1px solid var(--trait);padding:6px 8px;font-family:var(--mono);font-size:9.5px;line-height:1.5}
   border:1px solid var(--trait);padding:6px 9px;font-family:var(--titre);font-size:12px;
   letter-spacing:.05em;text-transform:uppercase;line-height:1.5}
@@ -71,6 +70,7 @@ a{color:var(--eau)}
   padding:8px 11px;font-size:12.5px;box-shadow:0 6px 18px rgba(0,0,0,.16);opacity:0;transition:opacity .1s;
   z-index:9;font-variant-numeric:tabular-nums;white-space:nowrap}
 @media (prefers-reduced-motion:reduce){*{transition:none!important}}
+.tt .flou{opacity:.72}
 </style>
 </head>
 <body>
@@ -83,7 +83,7 @@ a{color:var(--eau)}
 <div class="kpis" id="kpis"></div>
 
 <div class="panneau">
-  <h2>Pluie sur le bassin et niveau d'eau à Rochereau</h2>
+  <h2>De la pluie au bassin jusqu'à votre parcelle, sur un axe des temps commun</h2>
   <canvas id="graphe" height="520"></canvas>
   <div class="legende">
     <span><i class="sw carre" style="background:var(--radar)"></i>pluie radar mesurée</span>
@@ -95,11 +95,6 @@ a{color:var(--eau)}
     <span><i class="sw" style="background:var(--seuil)"></i>porte de la maison</span>
     <span><i class="sw" style="background:var(--seuil2)"></i>atelier</span>
   </div>
-</div>
-
-<div class="panneau">
-  <h2>Stations qui portent la prévision</h2>
-  <div id="stations-hote"><canvas id="stations"></canvas></div>
   <p class="note" id="note-stations"></p>
 </div>
 
@@ -138,17 +133,34 @@ const pic=Math.max(...Zq["50"]), picH=Math.max(...Zq["90"]);
 const iPic=Zq["50"].indexOf(pic);
 
 /* ------------------------------------------------------------------ graphe */
+/* Une seule figure, un seul axe des temps. La pluie, les trois stations amont
+   et la cote a Rochereau partagent la meme fonction X() et les memes marges :
+   c'est la condition pour qu'une verticale traverse toutes les bandes au meme
+   instant, et donc pour lire le decalage entre l'averse, la montee a
+   Saint-Mesmin, son arrivee a Saint-Laurent et ce qu'elle donne chez vous.
+   Deux canvas separes, meme cales sur les memes bornes, ne le garantissaient
+   pas : leurs conteneurs ne faisaient pas la meme largeur. */
+const ORDRE=["M702241010","M704401010","M703243010"];   // de l'amont vers l'aval
+function stationsOrdonnees(){
+  const S=D.stations||[];
+  return ORDRE.map(c=>S.find(s=>s.code===c)).filter(Boolean)
+    .concat(S.filter(s=>!ORDRE.includes(s.code)));
+}
+let G=null;
+
 function tracer(){
   const cv=$("#graphe"), dpr=devicePixelRatio||1;
-  const W=cv.parentElement.clientWidth-2, H=520;
+  const W=cv.parentElement.clientWidth-2;
   if(W<40) return;
+  const ST=stationsOrdonnees();
+  const L=58,R=14,T=12,B=30, hPluie=112, hSt=126, hRoch=208, gap=13;
+  const H=T+hPluie+gap+ST.length*(hSt+gap)+hRoch+B;
   cv.width=W*dpr; cv.height=H*dpr; cv.style.width=W+"px"; cv.style.height=H+"px";
   const c=cv.getContext("2d"); c.setTransform(dpr,0,0,dpr,0,0); c.clearRect(0,0,W,H);
 
-  const L=58,R=14,T=12,B=30, hPluie=126, gap=14;
-  const yH=T+hPluie+gap, yB=H-B, hH=yB-yH;
   const x0=new Date(t0.getTime()-5*864e5), x1=tPrev[tPrev.length-1];
   const X=d=>L+(d-x0)/(x1-x0)*(W-L-R);
+  const bandes=[];
 
   /* --- pluie, axe inverse en haut */
   const rad=D.pluie.radar, ana=D.pluie.analyse, pv=D.pluie.prevue;
@@ -156,6 +168,7 @@ function tracer(){
   const pmax=Math.max(0.8,...toutes);
   const RY=v=>T+hPluie-(v/pmax)*hPluie;
   const bw=Math.max(1.6,(W-L-R)/((x1-x0)/36e5)*0.86);
+  c.save(); c.beginPath(); c.rect(L,T,W-L-R,hPluie); c.clip();
   const barre=(t,v,couleur,alpha)=>{ if(v==null||!(v>0))return;
     c.globalAlpha=alpha; c.fillStyle=couleur;
     c.fillRect(X(t)-bw/2,RY(v),bw,T+hPluie-RY(v)); c.globalAlpha=1; };
@@ -163,12 +176,60 @@ function tracer(){
   if(pv){ pv.time.forEach((s,i)=>barre(dt(s),pv.p90[i],css("--prev"),.34));
           pv.time.forEach((s,i)=>barre(dt(s),pv.p50[i],css("--prev"),.95)); }
   rad.time.forEach((s,i)=>barre(dt(s),rad.mm[i],css("--radar"),1));
+  c.restore();
   c.strokeStyle=css("--trait"); c.lineWidth=1;
   c.beginPath(); c.moveTo(L,T+hPluie+.5); c.lineTo(W-R,T+hPluie+.5); c.stroke();
   c.fillStyle=css("--sourdine"); c.font="10px "+css("--mono"); c.textAlign="right";
   c.fillText(fmt(pmax,1)+" mm/h",L-6,T+10); c.fillText("0",L-6,T+hPluie);
+  c.textAlign="left"; c.font="600 11px "+css("--titre");
+  c.fillText("PLUIE SUR LE BASSIN",L+6,T+11);
 
-  /* --- niveau */
+  /* --- stations amont, une bande chacune, meme axe des temps, echelle propre */
+  const ligne=(xs,ys,Yb,col,w,dash)=>{ c.strokeStyle=col;c.lineWidth=w;c.setLineDash(dash||[]);
+    c.beginPath(); let on=false;
+    ys.forEach((v,i)=>{ if(v==null||!isFinite(v)){on=false;return;} const x=X(xs[i]),y=Yb(v);
+      on?c.lineTo(x,y):c.moveTo(x,y); on=true; });
+    c.stroke(); c.setLineDash([]); };
+
+  ST.forEach((st,k)=>{
+    const yT=T+hPluie+gap+k*(hSt+gap), yB=yT+hSt;
+    const tO=st.observe.time.map(dt), vO=st.observe.v;
+    const tp=st.prevu.time.map(dt), Q=st.prevu.q;
+    const vals=[...vO,...(Q["5"]||[]),...(Q["95"]||[])].filter(v=>v!=null&&isFinite(v));
+    if(!vals.length) return;
+    let lo=Math.min(...vals),hi=Math.max(...vals);
+    const pad=Math.max((hi-lo)*.18,.02); lo-=pad; hi+=pad;
+    const Y=v=>yB-(v-lo)/(hi-lo)*(yB-yT);
+    bandes.push({type:"station",st,yT,yB,Y,tO,vO,tp,Q});
+
+    c.fillStyle=css("--papier"); c.fillRect(L,yT,W-L-R,yB-yT);
+    const brut=(hi-lo)/3, mag=Math.pow(10,Math.floor(Math.log10(brut)));
+    const pasV=[1,2,2.5,5,10].find(x=>x*mag>=brut)*mag;
+    c.font="10px "+css("--mono");
+    for(let v=Math.ceil(lo/pasV)*pasV;v<=hi;v+=pasV){ const y=Y(v); if(y<yT+2||y>yB-2)continue;
+      c.strokeStyle=css("--trait"); c.globalAlpha=.55;
+      c.beginPath();c.moveTo(L,y+.5);c.lineTo(W-R,y+.5);c.stroke();c.globalAlpha=1;
+      c.fillStyle=css("--sourdine"); c.textAlign="right"; c.fillText(fmt(v,st.decimales),L-6,y+3.5); }
+
+    c.save(); c.beginPath(); c.rect(L,yT,W-L-R,yB-yT); c.clip();
+    [["5","95",css("--b3")],["10","90",css("--b2")],["25","75",css("--b1")]].forEach(([a,b,col])=>{
+      if(!Q[a]||!Q[b]) return;
+      c.fillStyle=col; c.beginPath();
+      Q[a].forEach((v,i)=>{const x=X(tp[i]),y=Y(v); i?c.lineTo(x,y):c.moveTo(x,y);});
+      for(let i=Q[b].length-1;i>=0;i--) c.lineTo(X(tp[i]),Y(Q[b][i]));
+      c.closePath(); c.fill(); });
+    ligne(tO,vO,Y,css("--obs"),1.7);
+    if(Q["50"]) ligne(tp,Q["50"],Y,css("--med"),2);
+    c.restore();
+    c.strokeStyle=css("--trait"); c.lineWidth=1;
+    c.strokeRect(L+.5,yT+.5,W-L-R-1,yB-yT-1);
+
+    c.fillStyle=css("--encre"); c.font="600 11.5px "+css("--titre"); c.textAlign="left";
+    c.fillText(`${st.nom.replace("Sèvre Nantaise à ","").toUpperCase()} · ${st.surface_km2} KM² · HAUTEUR (M)`,L+6,yT+12);
+  });
+
+  /* --- niveau a Rochereau */
+  const yH=T+hPluie+gap+ST.length*(hSt+gap), yB=yH+hRoch;
   // L'echelle suit l'eau, pas les seuils : en etiage ils sont trois metres plus
   // haut, et les inclure ecraserait la courbe contre le bord. Un seuil hors
   // champ est alors signale en marge, avec sa distance.
@@ -178,32 +239,28 @@ function tracer(){
   SEUILS.forEach(s=>{ if(s.cote>hi && s.cote-hi<etendue*1.6) hi=s.cote;
                       if(s.cote<lo && lo-s.cote<etendue*1.6) lo=s.cote; });
   const pad=Math.max((hi-lo)*.12,.12); lo-=pad; hi+=pad;
-  const Y=v=>yB-(v-lo)/(hi-lo)*hH;
+  const Y=v=>yB-(v-lo)/(hi-lo)*(yB-yH);
   const horsChamp=SEUILS.filter(s=>s.cote>hi||s.cote<lo);
+  bandes.push({type:"rochereau",yT:yH,yB,Y});
 
-  c.strokeStyle=css("--trait"); c.fillStyle=css("--sourdine"); c.font="11px system-ui";
-  const pas=[0.1,0.25,0.5,1,2].find(p=>(hi-lo)/p<=7)||2;
-  for(let v=Math.ceil(lo/pas)*pas;v<=hi;v+=pas){ const y=Y(v);
-    if(y<yH||y>yB)continue;
-    c.globalAlpha=.5;c.beginPath();c.moveTo(L,y+.5);c.lineTo(W-R,y+.5);c.stroke();c.globalAlpha=1;
-    c.textAlign="right"; c.fillText(fmt(v,2),L-7,y+4); }
+  c.fillStyle=css("--papier"); c.fillRect(L,yH,W-L-R,yB-yH);
+  c.fillStyle=css("--sourdine"); c.font="11px system-ui";
+  const pasR=[0.1,0.25,0.5,1,2].find(p=>(hi-lo)/p<=7)||2;
+  for(let v=Math.ceil(lo/pasR)*pasR;v<=hi;v+=pasR){ const y=Y(v);
+    if(y<yH+2||y>yB-2)continue;
+    c.strokeStyle=css("--trait"); c.globalAlpha=.55;
+    c.beginPath();c.moveTo(L,y+.5);c.lineTo(W-R,y+.5);c.stroke();c.globalAlpha=1;
+    c.fillStyle=css("--sourdine"); c.textAlign="right"; c.fillText(fmt(v,2),L-7,y+4); }
   c.save(); c.translate(13,(yH+yB)/2); c.rotate(-Math.PI/2); c.textAlign="center";
-  c.fillText("Cote à Rochereau (m NGF)",0,0); c.restore();
+  c.fillStyle=css("--sourdine"); c.fillText("Cote à Rochereau (m NGF)",0,0); c.restore();
 
-  const jours=[]; for(let d=new Date(x0); d<=x1; d.setUTCHours(0,0,0,0),d.setUTCDate(d.getUTCDate()+1)) jours.push(new Date(d));
-  jours.forEach(d=>{ const x=X(d); if(x<L)return;
-    c.globalAlpha=.4;c.beginPath();c.moveTo(x+.5,T);c.lineTo(x+.5,yB);c.stroke();c.globalAlpha=1;
-    c.textAlign="center"; c.fillStyle=css("--sourdine");
-    c.fillText(d.toLocaleDateString("fr-FR",{weekday:"short",day:"2-digit",timeZone:"UTC"}),x,yB+16); });
-
-  /* --- faisceau */
+  c.save(); c.beginPath(); c.rect(L,yH,W-L-R,yB-yH); c.clip();
   [["5","95",css("--b3")],["10","90",css("--b2")],["25","75",css("--b1")]].forEach(([a,b,col])=>{
     c.fillStyle=col; c.beginPath();
     Zq[a].forEach((v,i)=>{const x=X(tPrev[i]),y=Y(v); i?c.lineTo(x,y):c.moveTo(x,y);});
     for(let i=Zq[b].length-1;i>=0;i--) c.lineTo(X(tPrev[i]),Y(Zq[b][i]));
     c.closePath(); c.fill(); });
 
-  /* --- seuils de la propriete */
   SEUILS.forEach((s,k)=>{
     const col=k?css("--seuil2"):css("--seuil");
     const y=Y(s.cote);
@@ -221,24 +278,47 @@ function tracer(){
       c.fillStyle=SEUILS.indexOf(s)?css("--seuil2"):css("--seuil");
       const ecart=hautDessus? s.cote-hi : lo-s.cote;
       c.fillText(`${s.nom.toUpperCase()} ${hautDessus?"↑":"↓"} ${fmt(ecart,1)} M PLUS ${hautDessus?"HAUT":"BAS"}`,
-                 W-R-4, (hautDessus?yH+13:yB-5)+k*14);
+                 W-R-4, (hautDessus?yH+13:yB-6)+k*14);
     });
   }
+  ligne(tObs,zObs,Y,css("--obs"),1.9);
+  ligne(tPrev,Zq["50"],Y,css("--med"),2.2);
+  c.restore();
+  c.strokeStyle=css("--trait"); c.lineWidth=1;
+  c.strokeRect(L+.5,yH+.5,W-L-R-1,yB-yH-1);
 
-  /* --- courbes */
-  const ligne=(xs,ys,col,w,dash)=>{ c.strokeStyle=col;c.lineWidth=w;c.setLineDash(dash||[]);
-    c.beginPath(); let on=false;
-    ys.forEach((v,i)=>{ if(v==null||!isFinite(v)){on=false;return;} const x=X(xs[i]),y=Y(v);
-      on?c.lineTo(x,y):c.moveTo(x,y); on=true; });
-    c.stroke(); c.setLineDash([]); };
-  ligne(tObs,zObs,css("--obs"),1.9);
-  ligne(tPrev,Zq["50"],css("--med"),2.2);
+  /* --- l'axe des temps, commun : les verticales traversent toute la figure,
+     c'est ce qui rend le decalage entre bandes lisible sans instrument. */
+  // On gradue aux minuits pleins. Partir du bord gauche, qui tombe a une heure
+  // quelconque, collait une date contre la suivante. La forme du libelle suit
+  // la place disponible : sur un ecran etroit, huit dates ecrites en toutes
+  // lettres se chevauchent et ne se lisent plus.
+  const jours=[]; const j0=new Date(x0); j0.setUTCHours(0,0,0,0);
+  if(j0<x0) j0.setUTCDate(j0.getUTCDate()+1);
+  for(let d=new Date(j0); d<=x1; d.setUTCDate(d.getUTCDate()+1)) jours.push(new Date(d));
+  const espace=(W-L-R)/Math.max(jours.length,1);
+  const forme=espace>84?{weekday:"short",day:"2-digit",month:"2-digit"}
+             :espace>50?{day:"2-digit",month:"2-digit"}
+             :{day:"2-digit"};
+  const saut=espace<22?2:1;
+  c.font="11px system-ui"; c.textAlign="center";
+  jours.forEach((d,k)=>{
+    const x=X(d);
+    c.strokeStyle=css("--sourdine"); c.globalAlpha=.35;
+    c.beginPath();c.moveTo(x+.5,T);c.lineTo(x+.5,H-B);c.stroke();c.globalAlpha=1;
+    if(k%saut) return;
+    c.fillStyle=css("--sourdine");
+    c.fillText(d.toLocaleDateString("fr-FR",{...forme,timeZone:"UTC"}),x,H-B+16);
+  });
 
-  c.strokeStyle=css("--sourdine"); c.setLineDash([3,3]); c.lineWidth=1;
-  c.beginPath(); c.moveTo(X(t0)+.5,T); c.lineTo(X(t0)+.5,yB); c.stroke(); c.setLineDash([]);
+  c.strokeStyle=css("--encre"); c.globalAlpha=.55; c.setLineDash([3,3]); c.lineWidth=1;
+  c.beginPath(); c.moveTo(X(t0)+.5,T); c.lineTo(X(t0)+.5,H-B); c.stroke();
+  c.setLineDash([]); c.globalAlpha=1;
   c.fillStyle=css("--sourdine"); c.font="10px "+css("--mono"); c.textAlign="left";
-  c.fillText("maintenant",X(t0)+5,yH+11);
-  window._g={X,Y,L,R,W,x0,x1,yH,yB};
+  c.fillText("maintenant",X(t0)+5,T+hPluie-4);
+
+  G={X,Y,L,R,W,H,T,B,x0,x1,yH,yB,bandes};
+  window._g=G;
 }
 
 /* ------------------------------------------------------------------ texte */
@@ -304,144 +384,66 @@ function pied(){
     +`<b>Outil personnel expérimental : il ne remplace pas la vigilance officielle Vigicrues.</b>`;
 }
 /* ------------------------------------------------------------------ survol */
+/* Un seul curseur pour toute la figure : un trait vertical qui traverse les
+   quatre bandes et donne, au meme instant, la pluie, les trois stations et la
+   cote chez vous. C'est la lecture du decalage, chiffree plutot qu'estimee. */
+function proche(arr,x){let b=-1,bd=Infinity;arr.forEach((v,i)=>{const k=Math.abs(v-x);if(k<bd){bd=k;b=i;}});return b;}
 $("#graphe").addEventListener("mousemove",e=>{
-  const g=window._g; if(!g)return;
-  const r=e.target.getBoundingClientRect(), px=e.clientX-r.left;
+  const g=G; if(!g)return;
+  const r=e.target.getBoundingClientRect(), px=(e.clientX-r.left)/r.width*g.W;
   const tt=$("#tt");
-  if(px<g.L||px>g.W-g.R){tt.style.opacity=0;return;}
+  if(px<g.L||px>g.W-g.R){ tt.style.opacity=0; tracer(); return; }
   const d=new Date(+g.x0+(px-g.L)/(g.W-g.L-g.R)*(g.x1-g.x0));
-  const proche=(arr,x)=>{let b=0,bd=Infinity;arr.forEach((v,i)=>{const k=Math.abs(v-x);if(k<bd){bd=k;b=i;}});return b;};
-  let html;
-  if(d<=t0){ const i=proche(tObs,d);
-    html=`<b>${fdate(tObs[i])}</b><br>observé ${fmt(zObs[i])} m<br>porte ${cm(zObs[i]-PORTE)}`;
-  } else { const i=proche(tPrev,d);
-    html=`<b>${fdate(tPrev[i])}</b> · +${Math.round((tPrev[i]-t0)/36e5)} h<br>`
-      +`médiane <b>${fmt(Zq["50"][i])} m</b> — porte ${cm(Zq["50"][i]-PORTE)}<br>`
-      +`80 % : ${fmt(Zq["10"][i])} – ${fmt(Zq["90"][i])} m`; }
+  const futur=d>t0;
+  tracer();
+  const c=$("#graphe").getContext("2d");
+  c.strokeStyle=css("--seuil"); c.lineWidth=1;
+  c.beginPath(); c.moveTo(px+.5,g.T); c.lineTo(px+.5,g.H-g.B); c.stroke();
+
+  let html=`<b>${fdate(d)}</b>`+(futur?` · +${Math.round((d-t0)/36e5)} h`:"");
+  g.bandes.forEach(b=>{
+    if(b.type==="station"){
+      const src=futur?b.tp:b.tO, val=futur?(b.Q["50"]||[]):b.vO;
+      const i=proche(src,d), v=i>=0?val[i]:null;
+      if(v==null||!isFinite(v)) return;
+      c.fillStyle=css("--seuil"); c.beginPath(); c.arc(px,b.Y(v),3.5,0,7); c.fill();
+      html+=`<br>${b.st.nom.replace("Sèvre Nantaise à ","")} <b>${fmt(v,b.st.decimales)} m</b>`;
+    } else {
+      const i=proche(futur?tPrev:tObs,d);
+      const v=futur?Zq["50"][i]:zObs[i];
+      if(v==null||!isFinite(v)) return;
+      c.fillStyle=css("--seuil"); c.beginPath(); c.arc(px,b.Y(v),3.5,0,7); c.fill();
+      html+=`<br>Rochereau <b>${fmt(v)} m NGF</b> — porte ${cm(v-PORTE)}`;
+      if(futur) html+=`<br><span class="flou">80 % : ${fmt(Zq["10"][i])} – ${fmt(Zq["90"][i])} m</span>`;
+    }
+  });
   tt.innerHTML=html; tt.style.opacity=1;
-  tt.style.left=Math.min(e.clientX+14,innerWidth-200)+"px"; tt.style.top=(e.clientY-10)+"px";
+  tt.style.left=Math.min(e.clientX+14,innerWidth-250)+"px"; tt.style.top=(e.clientY-10)+"px";
 });
-$("#graphe").addEventListener("mouseleave",()=>$("#tt").style.opacity=0);
+$("#graphe").addEventListener("mouseleave",()=>{ $("#tt").style.opacity=0; tracer(); });
 
 /* ---------------------------------------------------------------- stations */
-/* Les trois stations partagent un seul canvas et un seul axe des temps : c'est
-   la condition pour lire les decalages de montee et de descente d'une station
-   a l'autre. Trois graphiques separes, chacun avec son echelle, rendraient la
-   comparaison temporelle impossible a l'oeil. */
-const ORDRE=["M702241010","M704401010","M703243010"];   // de l'amont vers l'aval
-function stationsOrdonnees(){
-  const S=D.stations||[];
-  return ORDRE.map(c=>S.find(s=>s.code===c)).filter(Boolean)
-    .concat(S.filter(s=>!ORDRE.includes(s.code)));
-}
-let geoStations=null;
-function tracerStations(){
-  const cv=$("#stations"); if(!cv) return;
-  const S=stationsOrdonnees(); if(!S.length) return;
-  const dpr=devicePixelRatio||1, W=cv.parentElement.clientWidth-2;
-  if(W<40) return;
-  const hUn=148, ecart=16, T=10, B=26, L=54, R=12;
-  const H=T+S.length*hUn+(S.length-1)*ecart+B;
-  cv.width=W*dpr; cv.height=H*dpr; cv.style.width=W+"px"; cv.style.height=H+"px";
-  const c=cv.getContext("2d"); c.setTransform(dpr,0,0,dpr,0,0); c.clearRect(0,0,W,H);
-
-  const tP=S[0].prevu.time.map(dt);
-  const x0=new Date(t0.getTime()-5*864e5), x1=tP.length?tP[tP.length-1]:t0;
-  const X=d=>L+(d-x0)/(x1-x0)*(W-L-R);
-  const cadres=[];
-
-  S.forEach((st,k)=>{
-    const yT=T+k*(hUn+ecart), yB=yT+hUn;
-    const tO=st.observe.time.map(dt), vO=st.observe.v;
-    const tp=st.prevu.time.map(dt), Q=st.prevu.q;
-    let vals=[...vO,...(Q["5"]||[]),...(Q["95"]||[])].filter(v=>v!=null&&isFinite(v));
-    if(!vals.length) return;
-    let lo=Math.min(...vals),hi=Math.max(...vals);
-    const pad=Math.max((hi-lo)*.16,st.unite==="m"?.02:.01); lo-=pad; hi+=pad;
-    const Y=v=>yB-(v-lo)/(hi-lo)*(yB-yT);
-    cadres.push({st,yT,yB,Y,tO,vO,tp,Q});
-
-    c.fillStyle=css("--carte"); c.fillRect(L,yT,W-L-R,yB-yT);
-    c.strokeStyle=css("--trait"); c.lineWidth=1;
-    c.strokeRect(L+.5,yT+.5,W-L-R-1,yB-yT-1);
-    const brut=(hi-lo)/3, mag=Math.pow(10,Math.floor(Math.log10(brut)));
-    const pas=[1,2,2.5,5,10].find(x=>x*mag>=brut)*mag;
-    c.font="10px "+css("--mono"); c.fillStyle=css("--sourdine");
-    for(let v=Math.ceil(lo/pas)*pas;v<=hi;v+=pas){ const y=Y(v); if(y<yT+2||y>yB-2)continue;
-      c.globalAlpha=.45;c.beginPath();c.moveTo(L,y+.5);c.lineTo(W-R,y+.5);c.stroke();c.globalAlpha=1;
-      c.textAlign="right"; c.fillText(fmt(v,st.decimales),L-6,y+3.5); }
-
-    [["5","95",css("--b3")],["10","90",css("--b2")],["25","75",css("--b1")]].forEach(([a,b,col])=>{
-      if(!Q[a]||!Q[b]) return;
-      c.fillStyle=col; c.beginPath();
-      Q[a].forEach((v,i)=>{const x=X(tp[i]),y=Y(v); i?c.lineTo(x,y):c.moveTo(x,y);});
-      for(let i=Q[b].length-1;i>=0;i--) c.lineTo(X(tp[i]),Y(Q[b][i]));
-      c.closePath(); c.fill(); });
-    const ligne=(xs,ys,col,w)=>{ c.strokeStyle=col;c.lineWidth=w;c.beginPath(); let on=false;
-      ys.forEach((v,i)=>{ if(v==null||!isFinite(v)){on=false;return;} const x=X(xs[i]),y=Y(v);
-        on?c.lineTo(x,y):c.moveTo(x,y); on=true; }); c.stroke(); };
-    ligne(tO,vO,css("--obs"),1.7);
-    if(Q["50"]) ligne(tp,Q["50"],css("--med"),2);
-
-    c.fillStyle=css("--encre"); c.font="600 12.5px "+css("--titre"); c.textAlign="left";
-    c.fillText(`${st.nom.replace("Sèvre Nantaise à ","")} — ${st.surface_km2} km² — ${st.unite}`.toUpperCase(),L+7,yT+15);
-  });
-
-  // repere de l'instant present, traverse les trois cadres
-  const xNow=X(t0);
-  c.strokeStyle=css("--sourdine"); c.setLineDash([3,3]); c.lineWidth=1;
-  c.beginPath(); c.moveTo(xNow+.5,T); c.lineTo(xNow+.5,H-B); c.stroke(); c.setLineDash([]);
-
-  c.fillStyle=css("--sourdine"); c.font="10px system-ui"; c.textAlign="center";
-  for(let d=new Date(x0); d<=x1; d.setUTCHours(0,0,0,0),d.setUTCDate(d.getUTCDate()+1)){
-    const x=X(d); if(x<L)continue;
-    c.strokeStyle=css("--trait"); c.globalAlpha=.5;
-    c.beginPath(); c.moveTo(x+.5,T); c.lineTo(x+.5,H-B); c.stroke(); c.globalAlpha=1;
-    c.fillText(d.toLocaleDateString("fr-FR",{weekday:"short",day:"2-digit",month:"2-digit",timeZone:"UTC"}),x,H-9);
-  }
-  geoStations={X,cadres,L,R,W,H,T,B,x0,x1};
-}
 function stations(){
   const S=stationsOrdonnees();
-  if(!S.length){ $("#stations-hote").innerHTML='<p class="note">Prévision par station indisponible.</p>'; return; }
-  tracerStations();
-  $("#note-stations").innerHTML=`De l'amont vers l'aval, sur <b>un axe des temps commun</b> : `
-    +`c'est ce qui permet de lire le décalage entre la montée à Saint-Mesmin et son arrivée à `
-    +`Saint-Laurent. Saint-Laurent est <b>limnimétrique</b> — elle ne publie qu'une hauteur, jamais `
-    +`de débit, d'où la prévision par l'amont. Saint-Mesmin porte 62 % du bassin et l'Ouin 11 % ; `
-    +`c'est à Saint-Mesmin que la prévision se confronte à une mesure de même nature. `
+  const n=$("#note-stations"); if(!n) return;
+  if(!S.length){ n.innerHTML="Prévision par station indisponible."; return; }
+  n.innerHTML=`Les bandes se lisent de haut en bas comme l'eau descend : la pluie, `
+    +`puis <b>Saint-Mesmin</b> (359 km², 62 % du bassin), <b>l'Ouin</b> (61 km², 11 %), `
+    +`<b>Saint-Laurent</b> (576 km²), enfin votre parcelle. Toutes partagent le même axe des `
+    +`temps : une verticale traverse la figure entière, ce qui donne directement le décalage `
+    +`entre la montée à Saint-Mesmin et son arrivée à l'aval. Les stations sont en `
+    +`<b>hauteur d'échelle</b>, la grandeur qu'elles mesurent vraiment ; la prévision, calculée `
+    +`en débit, y est ramenée par la courbe hauteur-débit de chaque station, construite sur ses `
+    +`propres couples publiés — fidèle au centimètre en basses eaux, plus lâche en crue où la `
+    +`relation dépend de l'événement. Chaque bande garde `
+    +`son échelle verticale — ce sont des rivières de tailles différentes. `
     +`Trait noir : observé. Trait bleu et bandes : médiane prévue et incertitude à 50, 80 et 90 %.`;
 }
 function rendre(){ entete(); kpis(); stations(); scenarios(); bilanPluie(); pied(); tracer(); }
 
 /* Curseur commun aux trois stations : la valeur de chacune au meme instant,
    pour chiffrer le decalage plutot que de l'estimer a l'oeil. */
-$("#stations").addEventListener("mousemove",e=>{
-  const g=geoStations; if(!g) return;
-  const r=e.target.getBoundingClientRect(), px=(e.clientX-r.left)/r.width*g.W;
-  const tt=$("#tt");
-  if(px<g.L||px>g.W-g.R){ tt.style.opacity=0; tracerStations(); return; }
-  const d=new Date(+g.x0+(px-g.L)/(g.W-g.L-g.R)*(g.x1-g.x0));
-  tracerStations();
-  const cv=$("#stations"), c=cv.getContext("2d");
-  c.strokeStyle=css("--seuil"); c.lineWidth=1;
-  c.beginPath(); c.moveTo(px+.5,g.T); c.lineTo(px+.5,g.H-g.B); c.stroke();
-  const proche=(arr,x)=>{let b=-1,bd=Infinity;arr.forEach((v,i)=>{const k=Math.abs(v-x);if(k<bd){bd=k;b=i;}});return b;};
-  let html=`<b>${fdate(d)}</b>`;
-  g.cadres.forEach(f=>{
-    const futur=d>t0;
-    const src=futur?f.tp:f.tO, val=futur?(f.Q["50"]||[]):f.vO;
-    const i=proche(src,d); const v=i>=0?val[i]:null;
-    if(v!=null&&isFinite(v)){
-      c.fillStyle=css("--seuil"); c.beginPath(); c.arc(px,f.Y(v),3.5,0,7); c.fill();
-      html+=`<br>${f.st.nom.replace("Sèvre Nantaise à ","")} <b>${fmt(v,f.st.decimales)}</b> ${f.st.unite}`;
-    }
-  });
-  tt.innerHTML=html; tt.style.opacity=1;
-  tt.style.left=Math.min(e.clientX+14,innerWidth-230)+"px"; tt.style.top=(e.clientY-10)+"px";
-});
-$("#stations").addEventListener("mouseleave",()=>{ $("#tt").style.opacity=0; tracerStations(); });
-function redessiner(){ tracer(); tracerStations(); }
+function redessiner(){ tracer(); }
 addEventListener("resize",redessiner);
 // Le redimensionnement seul ne suffit pas : une page rendue d'abord a largeur
 // nulle ne recoit jamais d'evenement resize quand son conteneur s'ouvre.

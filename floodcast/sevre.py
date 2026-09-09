@@ -171,7 +171,9 @@ def prevoir(horizon_h: int = 72, verbose: bool = True) -> dict:
         "date_prevision": str(horodatage[0] - pd.Timedelta(hours=1)),
         "time": [d.isoformat() for d in horodatage],
         "Q_amont": {str(p): list(np.round(v, 2)) for p, v in quantiles_q.items()},
-        "H": {str(p): list(np.round(v, 3)) for p, v in quantiles_h.items()},
+        # Quatre decimales : la cote a Rochereau se deduit de cette hauteur, et
+        # un arrondi au millimetre y laisse des marches visibles a l'ecran.
+        "H": {str(p): list(np.round(v, 4)) for p, v in quantiles_h.items()},
         "observe": {"time": [d.isoformat() for d in h_obs.index],
                     "H": list(np.round(h_obs.to_numpy(), 3))},
         "seuils": seuils, "depassements": depassements,

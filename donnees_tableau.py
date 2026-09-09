@@ -81,14 +81,28 @@ def _cumul_point(fin: pd.Timestamp, heures: int = HEURES_PASSEES):
     return round(float(ser.sum()), 2) if len(ser) else None
 
 
-def _stations(prevision, h_saint_laurent, q_amont):
-    """Les deux stations qui portent la prevision, chacune dans son unite.
+_SITE_DE = {"M702241010": "M7022410", "M704401010": "M7044010"}
 
-    Saint-Laurent est limnimetrique : on la suit en hauteur a l'echelle, la
-    seule grandeur qu'elle publie. Saint-Mesmin jauge le debit et couvre a
-    elle seule 62 % du bassin amont : c'est la que la prevision se confronte
-    a une mesure de meme nature.
+
+def _stations(prevision, h_saint_laurent, q_amont):
+    """Les trois stations qui portent la prevision, toutes en hauteur d'echelle.
+
+    Elles sont affichees en hauteur et non en debit. C'est la grandeur que la
+    station mesure reellement — le debit en est deja une interpretation —, c'est
+    celle qu'on lit sur le terrain, et c'est la seule qui se compare d'une
+    station a l'autre d'un coup d'oeil : trois hauteurs empilees se lisent
+    ensemble, un debit de 0,1 m3/s a l'Ouin et de 200 m3/s a Saint-Mesmin ne se
+    comparent pas. Saint-Laurent, du reste, ne publie que de la hauteur.
+
+    Le modele, lui, travaille en debit. La conversion passe par la courbe
+    hauteur-debit de chaque station, construite sur ses propres couples publies
+    (voir tarage.py). Convertir chaque quantile separement est licite : la
+    relation est monotone, elle preserve donc l'ordre des scenarios.
     """
+    from floodcast.sources import hubeau as hb
+
+    import tarage
+
     def dernier(valeurs):
         valides = [v for v in valeurs if v is not None and np.isfinite(v)]
         return valides[-1] if valides else None
@@ -105,13 +119,25 @@ def _stations(prevision, h_saint_laurent, q_amont):
     }]
     for code, bloc in (prevision.get("stations") or {}).items():
         obs = bloc["observe"]
+        idx = pd.DatetimeIndex(pd.to_datetime(obs["time"]))
+        mesure = hb.hourly(hb.observations_tr(code, "H", 25)).dropna()
+        h_obs = mesure.reindex(idx).interpolate(limit=3)
+        obs_h = [None if not np.isfinite(x) else round(float(x), 3) for x in h_obs.to_numpy()]
+
+        courbe = tarage.construire(_SITE_DE[code], code)
+        # Quatre decimales, pas trois : sur une bande zoomee au centimetre,
+        # l'arrondi au millimetre se voit comme un escalier qui n'existe pas.
+        h_prev = {k: [round(float(x), 4) for x in courbe.to_h(np.asarray(v, dtype=float))]
+                  for k, v in bloc["Q"].items()}
         out.append({
-            "code": code, "nom": bloc["nom"], "grandeur": "débit", "unite": "m³/s",
+            "code": code, "nom": bloc["nom"], "grandeur": "hauteur", "unite": "m",
             "decimales": 2, "surface_km2": bloc["surface_km2"],
-            "observe": {"time": obs["time"], "v": obs["Q"]},
+            "observe": {"time": obs["time"], "v": obs_h, "debit": obs["Q"]},
             "prevu": {"time": bloc["time"],
-                      "q": raccorder_quantiles(bloc["Q"], dernier(obs["Q"]),
-                                               horizon_decroissance_h=20.0)},
+                      "q": raccorder_quantiles(h_prev, dernier(obs_h),
+                                               horizon_decroissance_h=20.0, plafond=0.4),
+                      "debit": bloc["Q"].get("50")},
+            "tarage": tarage.diagnostic(courbe, _SITE_DE[code], code),
         })
     return out
 
