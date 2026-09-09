@@ -49,7 +49,9 @@ import hydroportail as hp  # noqa: E402
 from floodcast import sevre  # noqa: E402
 
 CIBLE = "M703243010"
-AMONT = ("M702241010", "M704401010")
+# Saint-Mesmin seule, pour la meme raison que dans caler_celerite.py : l'Ouin
+# est en aval de la station cible.
+AMONT = ("M702241010",)
 ANNEES_ETIAGE = range(2012, 2026)
 H_MINI = 0.30          # en dessous, c'est le capteur qui decroche, pas la riviere
 N_TRANCHES = 34

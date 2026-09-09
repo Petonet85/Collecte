@@ -40,7 +40,9 @@ import hydroportail as hp  # noqa: E402
 from floodcast import sevre  # noqa: E402
 
 CIBLE = "M703243010"
-AMONT = ("M702241010", "M704401010")
+# Saint-Mesmin seule : l'Ouin rejoint la Sevre 2,2 km sous la station de
+# Saint-Laurent et n'a donc aucun effet sur sa hauteur.
+AMONT = ("M702241010",)
 PAS_MIN = 10
 LISSAGE_H = 3.0
 RETARD_MAX_H = 36.0

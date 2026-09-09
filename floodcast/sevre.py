@@ -33,6 +33,15 @@ SITE_CIBLE = "M7032430"
 AMONT = {"M702241010": ("Sèvre Nantaise à Saint-Mesmin", 359.0),
          "M704401010": ("Ouin à Mauléon", 61.0)}
 SURFACE_CIBLE = 576.0
+
+# L'Ouin rejoint la Sevre 2,2 km SOUS la station de Saint-Laurent : mesure sur le
+# reseau BD TOPO, la confluence est a 33,0 km de Saint-Mesmin quand la station
+# est a 30,8 km. Son debit ne passe donc jamais devant l'echelle et ne doit pas
+# entrer dans la relation de transfert. Seule Saint-Mesmin l'alimente : 359 des
+# 576 km² du bassin de Saint-Laurent, le reste — 217 km² — n'est pas jauge.
+# L'Ouin reste prevue et affichee, et son apport a Rochereau, qui est en aval de
+# la confluence, est contenu dans les ancres du bief.
+AMONT_SAINT_LAURENT = ("M702241010",)
 OBS_ELAB = "https://hubeau.eaufrance.fr/api/v2/hydrometrie/obs_elab"
 
 
@@ -400,6 +409,8 @@ def prevoir(horizon_h: int = 72, verbose: bool = True) -> dict:
         # Les deux bassins partagent les memes membres de pluie : on peut sommer
         # trajectoire par trajectoire au lieu d'additionner des quantiles, ce qui
         # supposerait leurs rangs parfaitement correles et gonflerait l'incertitude.
+        if code not in AMONT_SAINT_LAURENT:
+            continue
         trajectoires = traj if trajectoires is None else trajectoires + traj
         if q_obs is not None and len(q_obs):
             q_amont_obs = q_obs if q_amont_obs is None else q_amont_obs.add(q_obs, fill_value=0.0)
@@ -509,36 +520,98 @@ def prevoir(horizon_h: int = 72, verbose: bool = True) -> dict:
 # Transfert vers Rochereau (Mortagne-sur-Sevre)
 # --------------------------------------------------------------------------- #
 
-# Bief cale sur quatre observations couvrant 2 a 290 m3/s :
-#   - ligne d'eau du vol LiDAR du 24/03/2022, dont le debit ce jour-la est connu ;
-#   - deux reperes de crue releves sur photos (octobre 2024, janvier 2025) ;
-#   - la profondeur d'eau mesuree en etiage, qui fixe la cote du fond ;
-#   - le niveau d'avril 1983, qui a revele que la relation hauteur-debit de
-#     Saint-Laurent surestimait de 16 % les debits hors de son domaine calibre.
+# Le bief est cale directement en HAUTEUR : cinq observations de terrain lient
+# la hauteur a l'echelle de Saint-Laurent a la cote atteinte a Rochereau.
+#
+# Passer par un debit intermediaire etait une erreur, et elle coutait cher. Les
+# deux reperes de crue avaient ete convertis en debit via l'ancienne relation de
+# transfert, qui surestimait de 24 % : le repere de janvier 2025 se retrouvait
+# associe a 182 m3/s quand la mesure amont en donnait 146. La chaine, elle,
+# alimentait la relation avec le debit du modele, sur la vraie echelle. Les deux
+# ne parlaient pas de la meme grandeur, et la cote prevue a Rochereau ressortait
+# 24 a 27 cm trop bas sur toute la gamme des crues — jusqu'a 38 cm au niveau de
+# janvier 2025.
+#
+# En liant directement hauteur a hauteur, il n'y a plus de debit intermediaire,
+# donc plus d'echelle a confondre. Les cinq ancres sont toutes des observations :
+# une profondeur mesuree en etiage, une ligne d'eau LiDAR, deux reperes de crue
+# releves sur place, et le souvenir de 1983 situe a environ un metre au-dessus de
+# janvier 2025. La pente entre ancres decroit regulierement (5,1 puis 1,9 / 0,9 /
+# 0,6 m par metre d'echelle), ce qui est le comportement attendu d'un lit qui
+# s'elargit.
+#
+# Controle independant : le calage d'origine annoncait la porte a T = 4,2 ans et
+# l'atelier a T = 6,0 ans. Cette relation les place a 3,7 et 5,2 ans, la chaine
+# precedente a 5,3 et 8,4. Elle avait derive de son propre calage.
+#
+# Limite assumee : l'Ouin rejoint la Sevre 2,2 km SOUS Saint-Laurent, donc entre
+# la station et chez vous. Son apport n'apparait pas explicitement ici — il est
+# contenu dans les ancres, qui sont des crues reelles ou l'Ouin coulait. Le
+# separer demanderait des reperes couvrant plusieurs rapports Ouin/Sevre, que
+# nous n'avons pas.
 ROCHEREAU = {
-    "z_fond": 56.05, "a": 0.3371, "b": 0.470,
-    "h_calibre_max": 2.54,          # au-dela, la relation amont est corrigee
-    "h_1983": 4.25, "q_1983": 290.0,
+    "ancres": [
+        (0.530, 56.16, "etiage : 10 cm d'eau mesures sur place"),
+        (0.606, 56.55, "ligne d'eau du vol LiDAR du 24/03/2022"),
+        (2.100, 59.46, "repere de crue d'octobre 2024"),
+        (2.640, 59.95, "repere de crue de janvier 2025"),
+        (4.250, 60.95, "avril 1983, environ 1 m au-dessus de janvier 2025"),
+    ],
     "seuils": {"porte de la maison": 59.35, "atelier": 59.55},
 }
 
 
-def _correction_amont(h: float, rc, k: float) -> float:
-    """Debit amont pour une hauteur a Saint-Laurent, corrige hors domaine calibre."""
-    hc = ROCHEREAU["h_calibre_max"]
-    part = 0.0 if h <= hc else (h - hc) / (ROCHEREAU["h_1983"] - hc)
-    return float(rc.to_q(h)) * float(np.exp(k * part))
+def _pente_bord(h0, h1, d0, d1):
+    """Pente au bord d'une interpolation monotone, formule a trois points."""
+    p = ((2 * h0 + h1) * d0 - h0 * d1) / (h0 + h1)
+    if np.sign(p) != np.sign(d0):
+        return 0.0
+    if np.sign(d0) != np.sign(d1) and abs(p) > 3 * abs(d0):
+        return 3 * d0
+    return float(p)
+
+
+def _pentes_monotones(x, y):
+    """Pentes de Fritsch-Carlson.
+
+    Une spline ordinaire oscillerait entre des reperes aussi irregulierement
+    espaces : la cote remonterait puis redescendrait entre deux crues observees,
+    ce qu'aucun lit de riviere ne fait. Cette construction ne depasse jamais les
+    valeurs qu'on lui donne.
+    """
+    h = np.diff(x)
+    d = np.diff(y) / h
+    m = np.zeros_like(y, dtype=float)
+    for k in range(1, len(y) - 1):
+        if d[k - 1] * d[k] <= 0:
+            m[k] = 0.0
+        else:
+            w1, w2 = 2 * h[k] + h[k - 1], h[k] + 2 * h[k - 1]
+            m[k] = (w1 + w2) / (w1 / d[k - 1] + w2 / d[k])
+    m[0] = _pente_bord(h[0], h[1], d[0], d[1])
+    m[-1] = _pente_bord(h[-1], h[-2], d[-1], d[-2])
+    return m
 
 
 def niveau_rochereau(h_saint_laurent, rc=None):
-    """Convertit une hauteur a Saint-Laurent (m a l'echelle) en cote NGF a Rochereau."""
-    import numpy as _np
-    if rc is None:
-        rc, _, _ = relation_transfert()
-    k = float(_np.log(ROCHEREAU["q_1983"] / float(rc.to_q(ROCHEREAU["h_1983"]))))
-    h = _np.atleast_1d(_np.asarray(h_saint_laurent, dtype=float))
-    q = _np.array([_correction_amont(float(x), rc, k) for x in h])
-    return ROCHEREAU["z_fond"] + ROCHEREAU["a"] * q ** ROCHEREAU["b"]
+    """Cote NGF a Rochereau pour une hauteur a l'echelle de Saint-Laurent.
+
+    `rc` n'est plus utilise : la relation ne passe plus par un debit. Le
+    parametre reste accepte pour ne pas casser les appels existants.
+    """
+    x = np.array([a[0] for a in ROCHEREAU["ancres"]], dtype=float)
+    y = np.array([a[1] for a in ROCHEREAU["ancres"]], dtype=float)
+    m = _pentes_monotones(x, y)
+    q = np.atleast_1d(np.asarray(h_saint_laurent, dtype=float))
+    k = np.clip(np.searchsorted(x, q) - 1, 0, len(x) - 2)
+    h = x[k + 1] - x[k]
+    t = (q - x[k]) / h
+    v = ((2 * t ** 3 - 3 * t ** 2 + 1) * y[k] + (t ** 3 - 2 * t ** 2 + t) * h * m[k]
+         + (-2 * t ** 3 + 3 * t ** 2) * y[k + 1] + (t ** 3 - t ** 2) * h * m[k + 1])
+    # Hors des ancres on prolonge par la pente du bord, faute de mieux, et la
+    # page signale que l'on sort du domaine observe.
+    return np.where(q > x[-1], y[-1] + m[-1] * (q - x[-1]),
+                    np.where(q < x[0], y[0] + m[0] * (q - x[0]), v))
 
 
 def marges(z_ngf):

@@ -360,7 +360,7 @@ function scenarios(){
       <td>${fmt(s.z)} m</td><td>${cm(s.z-PORTE)}</td><td>${cm(s.z-ATELIER)}</td></tr>`).join("")+`</tbody>`;
   $("#note-scen").innerHTML=`✓ = relevé sur le terrain. Les autres sont calculés depuis le bief calé sur ces relevés. `
     +`Votre porte est franchie en moyenne tous les <b>${fmt(D.periodes_retour.maison,1)} ans</b>, l'atelier tous les `
-    +`<b>${fmt(D.periodes_retour.atelier,1)} ans</b>. Marges à lire à la dizaine de centimètres : l'incertitude est de ±13 cm. `
+    +`<b>${fmt(D.periodes_retour.atelier,1)} ans</b>. Le bief est calé <b>directement en hauteur</b>, sans passer par un débit : cinq observations de terrain relient la hauteur à l'échelle de Saint-Laurent à la cote atteinte chez vous. Marges à lire à la dizaine de centimètres — l'ajustement le plus lisse passant par ces cinq repères en manque au plus de 9 cm. `
     +`<a href="carte.html">Voir l'emprise sur la carte →</a>`;
 }
 function bilanPluie(){
@@ -436,8 +436,13 @@ function stations(){
   if(!S.length){ n.innerHTML="Prévision par station indisponible."; return; }
   const P=D.propagation||{}, A=P.amont||{}, R=P.rochereau||{}, T=D.transfert||{};
   n.innerHTML=`Les bandes se lisent de haut en bas comme l'eau descend : la pluie, `
-    +`puis <b>Saint-Mesmin</b> (359 km², 62 % du bassin), <b>l'Ouin</b> (61 km², 11 %), `
-    +`<b>Saint-Laurent</b> (576 km²), enfin votre parcelle. Toutes partagent le même axe des `
+    +`puis <b>Saint-Mesmin</b> (359 km², 62 % du bassin de Saint-Laurent), <b>l'Ouin</b> `
+    +`(61 km²), `
+    +`<b>Saint-Laurent</b> (576 km²), enfin votre parcelle. <b>L'Ouin rejoint la Sèvre 2,2 km `
+    +`sous la station de Saint-Laurent</b> — mesuré sur le réseau BD TOPO — donc entre elle et `
+    +`chez vous : son débit n'entre pas dans la hauteur prévue à Saint-Laurent, qui ne dépend `
+    +`que de Saint-Mesmin et des 217 km² non jaugés. Son apport à votre cote est contenu dans `
+    +`les repères qui calent le bief. Toutes partagent le même axe des `
     +`temps : une verticale traverse la figure entière, ce qui donne directement le décalage `
     +`entre la montée à l'amont et son arrivée à l'aval.`
     +`<br><br><b>Temps de propagation, calé sur les crues passées.</b> Le retard entre le débit `
