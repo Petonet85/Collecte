@@ -147,6 +147,7 @@ const iPic=Zq["50"].indexOf(pic);
 function tracer(){
   const cv=$("#graphe"), dpr=devicePixelRatio||1;
   const W=cv.parentElement.clientWidth-2, H=520;
+  if(W<40) return;
   cv.width=W*dpr; cv.height=H*dpr; cv.style.width=W+"px"; cv.style.height=H+"px";
   const c=cv.getContext("2d"); c.setTransform(dpr,0,0,dpr,0,0); c.clearRect(0,0,W,H);
 
@@ -331,6 +332,9 @@ $("#graphe").addEventListener("mouseleave",()=>$("#tt").style.opacity=0);
 /* ---------------------------------------------------------------- stations */
 function tracerStation(cv,st){
   const dpr=devicePixelRatio||1, W=cv.parentElement.clientWidth, H=200;
+  // Une page ouverte dans un onglet masque ou un cadre replie a une largeur
+  // nulle : dessiner la laisserait un canvas vide meme apres affichage.
+  if(W<40) return;
   cv.width=W*dpr; cv.height=H*dpr; cv.style.width=W+"px"; cv.style.height=H+"px";
   const c=cv.getContext("2d"); c.setTransform(dpr,0,0,dpr,0,0); c.clearRect(0,0,W,H);
   const L=46,R=8,T=8,B=20, yB=H-B, hH=yB-T;
@@ -393,7 +397,14 @@ function stations(){
     +`Trait bleu et bandes : prévision médiane et son incertitude à 50, 80 et 90 %.`;
 }
 function rendre(){ entete(); kpis(); stations(); scenarios(); bilanPluie(); pied(); tracer(); }
-addEventListener("resize",()=>{ tracer(); stations(); });
+function redessiner(){ tracer(); stations(); }
+addEventListener("resize",redessiner);
+// Le redimensionnement seul ne suffit pas : une page rendue d'abord a largeur
+// nulle ne recoit jamais d'evenement resize quand son conteneur s'ouvre.
+if(window.ResizeObserver){
+  const ro=new ResizeObserver(e=>{ if(e.some(x=>x.contentRect.width>40)) redessiner(); });
+  ro.observe(document.querySelector(".feuille"));
+}
 matchMedia("(prefers-color-scheme:dark)").addEventListener("change",rendre);
 rendre();
 </script>
