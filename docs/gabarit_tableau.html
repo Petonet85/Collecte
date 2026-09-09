@@ -71,6 +71,11 @@ a{color:var(--eau)}
   z-index:9;font-variant-numeric:tabular-nums;white-space:nowrap}
 @media (prefers-reduced-motion:reduce){*{transition:none!important}}
 .tt .flou{opacity:.72}
+.choix{display:flex;flex-wrap:wrap;align-items:center;gap:9px;margin:10px 0 2px;font-size:13px}
+.choix label{color:var(--sourdine)}
+.choix select{font:inherit;font-family:var(--texte);padding:3px 7px;border:1px solid var(--trait);
+  background:var(--papier);color:var(--encre);border-radius:2px}
+.note-choix{color:var(--sourdine);font-size:12.5px}
 </style>
 </head>
 <body>
@@ -85,6 +90,11 @@ a{color:var(--eau)}
 <div class="panneau">
   <h2>De la pluie au bassin jusqu'à votre parcelle, sur un axe des temps commun</h2>
   <canvas id="graphe" height="520"></canvas>
+  <div class="choix">
+    <label for="crue-ref">Comparer à une crue passée :</label>
+    <select id="crue-ref"></select>
+    <span class="note-choix" id="note-crue"></span>
+  </div>
   <div class="legende">
     <span><i class="sw carre" style="background:var(--radar)"></i>pluie radar mesurée</span>
     <span><i class="sw carre" style="background:var(--analyse)"></i>analyse Météo-France</span>
@@ -152,6 +162,7 @@ function stationsOrdonnees(){
     .concat(S.filter(s=>!ORDRE.includes(s.code)));
 }
 let G=null;
+let choixCrue=null;   // crue de reference superposee au graphe de Rochereau
 
 function tracer(){
   const cv=$("#graphe"), dpr=devicePixelRatio||1;
@@ -164,6 +175,13 @@ function tracer(){
   const c=cv.getContext("2d"); c.setTransform(dpr,0,0,dpr,0,0); c.clearRect(0,0,W,H);
 
   const x0=new Date(t0.getTime()-5*864e5), x1=tPrev[tPrev.length-1];
+
+  /* L'echelle verticale doit se regler sur ce qu'on VOIT. Elle se calculait
+     jusqu'ici sur toute la serie observee, dont sept a dix jours tombent hors
+     du cadre a gauche : une crue passee depuis, invisible a l'ecran, ecrasait
+     la courbe du moment sans qu'on comprenne pourquoi. */
+  const visible=(temps,valeurs)=>valeurs.filter((v,i)=>
+    v!=null&&isFinite(v)&&temps[i]>=x0&&temps[i]<=x1);
   const X=d=>L+(d-x0)/(x1-x0)*(W-L-R);
   const bandes=[];
 
@@ -200,7 +218,7 @@ function tracer(){
     const yT=T+hPluie+gap+k*(hSt+gap), yB=yT+hSt;
     const tO=st.observe.time.map(dt), vO=st.observe.v;
     const tp=st.prevu.time.map(dt), Q=st.prevu.q;
-    const vals=[...vO,...(Q["5"]||[]),...(Q["95"]||[])].filter(v=>v!=null&&isFinite(v));
+    const vals=[...visible(tO,vO),...visible(tp,Q["5"]||[]),...visible(tp,Q["95"]||[])];
     if(!vals.length) return;
     let lo=Math.min(...vals),hi=Math.max(...vals);
     const pad=Math.max((hi-lo)*.18,.02); lo-=pad; hi+=pad;
@@ -238,8 +256,14 @@ function tracer(){
   // L'echelle suit l'eau, pas les seuils : en etiage ils sont trois metres plus
   // haut, et les inclure ecraserait la courbe contre le bord. Un seuil hors
   // champ est alors signale en marge, avec sa distance.
-  let eau=[...zObs,...Zq["5"],...Zq["95"]].filter(v=>v!=null&&isFinite(v));
+  let eau=[...visible(tObs,zObs),...visible(tPrev,Zq["5"]),...visible(tPrev,Zq["95"])];
+  if(!eau.length) eau=[...zObs,...Zq["50"]].filter(v=>v!=null&&isFinite(v));
   let lo=Math.min(...eau),hi=Math.max(...eau);
+  // Crue de reference choisie : l'echelle s'ouvre pour la contenir. La courbe du
+  // moment s'aplatit alors au bas du cadre, et c'est precisement l'information —
+  // l'ecart qui vous en separe.
+  const crueRef=(D.reperes||[]).concat(D.scenarios||[]).find(x=>x.nom===choixCrue);
+  if(crueRef){ hi=Math.max(hi,crueRef.z); lo=Math.min(lo,crueRef.z); }
   const etendue=Math.max(hi-lo,0.4);
   SEUILS.forEach(s=>{ if(s.cote>hi && s.cote-hi<etendue*1.6) hi=s.cote;
                       if(s.cote<lo && lo-s.cote<etendue*1.6) lo=s.cote; });
@@ -266,6 +290,16 @@ function tracer(){
     for(let i=Zq[b].length-1;i>=0;i--) c.lineTo(X(tPrev[i]),Y(Zq[b][i]));
     c.closePath(); c.fill(); });
 
+  if(crueRef){
+    const y=Y(crueRef.z);
+    if(y>=yH&&y<=yB){
+      c.strokeStyle=css("--encre"); c.globalAlpha=.55; c.lineWidth=1.4; c.setLineDash([7,4]);
+      c.beginPath(); c.moveTo(L,y+.5); c.lineTo(W-R,y+.5); c.stroke();
+      c.setLineDash([]); c.globalAlpha=1;
+      c.fillStyle=css("--encre"); c.textAlign="left"; c.font="600 11px "+css("--titre");
+      c.fillText(`${crueRef.nom.toUpperCase()} — ${fmt(crueRef.z)} M`,L+6,y-5);
+    }
+  }
   SEUILS.forEach((s,k)=>{
     const col=k?css("--seuil2"):css("--seuil");
     const y=Y(s.cote);
@@ -503,7 +537,21 @@ function stations(){
     +`<br><br>Trait noir : observé. Trait bleu et bandes : médiane prévue et incertitude à 50, 80 et 90 %.`;
 
 }
-function rendre(){ entete(); kpis(); stations(); scenarios(); bilanPluie(); pied(); tracer(); }
+function crues(){
+  const sel=$("#crue-ref"); if(!sel) return;
+  const tout=(D.reperes||[]).concat(D.scenarios||[]).slice().sort((a,b)=>b.z-a.z);
+  sel.innerHTML='<option value="">aucune</option>'
+    +tout.map(x=>`<option value="${x.nom}">${x.nom} — ${fmt(x.z)} m${x.mesure||x.ancre?" ✓":""}</option>`).join("");
+  const note=()=>{
+    const c=tout.find(x=>x.nom===choixCrue);
+    $("#note-crue").innerHTML=c
+      ? `${cm(c.z-PORTE)} par rapport à la porte · l'échelle du graphe s'ouvre pour la contenir`
+      : "✓ = relevé sur le terrain";
+  };
+  sel.onchange=e=>{ choixCrue=e.target.value||null; note(); tracer(); };
+  note();
+}
+function rendre(){ entete(); kpis(); crues(); stations(); scenarios(); bilanPluie(); pied(); tracer(); }
 
 /* Curseur commun aux trois stations : la valeur de chacune au meme instant,
    pour chiffrer le decalage plutot que de l'estimer a l'oeil. */
