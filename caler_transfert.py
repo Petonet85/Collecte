@@ -26,6 +26,25 @@ log-debit. Au-dela du plus fort couple observe on prolonge par la pente locale,
 faute de mieux, et c'est la que le calage de Rochereau vient reprendre la main
 en ancrant sur la crue de 1983.
 
+Piste explorée et ECARTEE — la pluie du bassin aval comme second predicteur.
+L'erreur dominante de la chaine vient des 217 km2 non jauges entre Saint-Mesmin
+et Saint-Laurent, dont la contribution varie d'un episode a l'autre. On a donc
+teste si la pluie recente sur le bassin de Saint-Laurent expliquait le residu.
+
+Le signal existe en apparence : la part de pluie tombee dans les dernieres 24 h
+correle a +0,40 avec le residu au pic sur les 27 crues (p = 0,037), ce qui a un
+sens physique — une averse breve fait reagir vite l'intermediaire quand
+Saint-Mesmin, dix-neuf heures de temps de concentration, ne l'a pas encore
+traduit.
+
+Mais il ne survit pas a la validation croisee : en laissant une crue de cote a
+chaque fois, la dispersion du residu ne baisse que de 3 %, et de 0 % avec le
+cumul brut sur 24 h. En retirant les deux seuls episodes d'ete, la correlation
+tombe a +0,34 avec p = 0,09 — elle etait portee par eux. Sur les crues d'hiver,
+celles qui comptent, il n'y a rien.
+
+On garde donc un seul predicteur. Inutile de refaire cet essai.
+
 Verification : hysteresis negligeable une fois le retard applique (l'ecart
 montee/descente a hauteur egale va de -16 a +7 %, sans signe constant), et
 aucune derive de la station (+0,46 cm/an en hautes eaux, p = 0,56, en ponderant
