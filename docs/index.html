@@ -76,6 +76,10 @@ a{color:var(--eau)}
 .choix select{font:inherit;font-family:var(--texte);padding:3px 7px;border:1px solid var(--trait);
   background:var(--papier);color:var(--encre);border-radius:2px}
 .note-choix{color:var(--sourdine);font-size:12.5px}
+.choix button{font:inherit;font-family:var(--texte);padding:3px 9px;cursor:pointer;
+  border:1px solid var(--trait);background:var(--carte);color:var(--encre);border-radius:2px}
+.choix button:hover{border-color:var(--sourdine)}
+#graphe{cursor:crosshair}
 </style>
 </head>
 <body>
@@ -93,6 +97,9 @@ a{color:var(--eau)}
   <div class="choix">
     <label for="fenetre">Historique affiché :</label>
     <select id="fenetre"></select>
+    <label for="annee">Année :</label>
+    <select id="annee"></select>
+    <button id="reinit" type="button" hidden>↺ vue complète</button>
     <label for="crue-ref">Comparer à une crue passée :</label>
     <select id="crue-ref"></select>
     <span class="note-choix" id="note-crue"></span>
@@ -166,6 +173,27 @@ function stationsOrdonnees(){
 let G=null;
 let choixCrue=null;   // crue de reference superposee au graphe de Rochereau
 let joursPasses=5;    // profondeur d'historique affichee, en jours
+let periode=null;     // {x0,x1} impose par un choix d'annee ou un zoom
+let HIST=null;        // chronique journaliere, chargee a la demande
+
+/* L'historique long pese 300 ko pour seize ans : le charger d'office
+   ralentirait chaque visite pour une fonction qu'on n'ouvre pas toujours. On
+   va le chercher au premier besoin, puis le navigateur le garde. */
+let chargement=null;
+function chargerHistorique(){
+  if(HIST) return Promise.resolve(HIST);
+  if(!chargement) chargement=fetch("historique.json")
+    .then(r=>r.ok?r.json():Promise.reject(r.status))
+    .then(j=>{HIST=j; return j;})
+    .catch(e=>{ HIST={erreur:String(e)}; return HIST; });
+  return chargement;
+}
+const jourDe=(debut,i)=>new Date(Date.parse(debut+"T12:00:00Z")+i*864e5);
+function serieJour(bloc){
+  if(!bloc||!bloc.max) return null;
+  const t=bloc.max.map((_,i)=>jourDe(bloc.debut,i));
+  return {t,lo:bloc.min||bloc.mm,hi:bloc.max||bloc.mm};
+}
 
 function tracer(){
   const cv=$("#graphe"), dpr=devicePixelRatio||1;
@@ -177,7 +205,8 @@ function tracer(){
   cv.width=W*dpr; cv.height=H*dpr; cv.style.width=W+"px"; cv.style.height=H+"px";
   const c=cv.getContext("2d"); c.setTransform(dpr,0,0,dpr,0,0); c.clearRect(0,0,W,H);
 
-  const x0=new Date(t0.getTime()-joursPasses*864e5), x1=tPrev[tPrev.length-1];
+  const x0=periode?periode.x0:new Date(t0.getTime()-joursPasses*864e5);
+  const x1=periode?periode.x1:tPrev[tPrev.length-1];
 
   /* L'echelle verticale doit se regler sur ce qu'on VOIT. Elle se calculait
      jusqu'ici sur toute la serie observee, dont sept a dix jours tombent hors
@@ -191,20 +220,20 @@ function tracer(){
      par son minimum et son maximum, jamais par sa moyenne — a cette echelle un
      pic de crue dure quelques heures, et une moyenne l'effacerait alors que
      c'est precisement ce qu'on vient voir. */
-  const LONG=joursPasses>20, HIST=D.historique||{};
-  const jour=t=>new Date(t+"T12:00:00Z");
-  const chronique=code=>{
-    const h=LONG&&HIST.stations&&HIST.stations[code];
-    return h?{t:h.time.map(jour),lo:h.min,hi:h.max,jour:true}:null;
-  };
+  // Au-dela de vingt jours affiches, le temps reel ne suffit plus : on bascule
+  // sur la chronique journaliere. Chaque journee y est resumee par son minimum
+  // et son maximum — a cette echelle un pic de crue dure quelques heures, et
+  // une moyenne l'effacerait alors que c'est ce qu'on vient voir.
+  const LONG=(x1-x0)>20*864e5 && HIST && !HIST.erreur;
+  const chronique=code=>LONG?serieJour((HIST.stations||{})[code]):null;
   const X=d=>L+(d-x0)/(x1-x0)*(W-L-R);
   const bandes=[];
 
   /* --- pluie, axe inverse en haut */
   const rad=D.pluie.radar, ana=D.pluie.analyse, pv=D.pluie.prevue;
-  const toutes=(LONG&&HIST.pluie
-    ? HIST.pluie.mm.filter((v,i)=>jour(HIST.pluie.time[i])>=x0)
-    : [...(rad.mm||[]),...(ana.mm||[]),...(pv?pv.p90:[])]).filter(v=>v!=null&&isFinite(v));
+  const PJ=LONG?serieJour(HIST.pluie):null;
+  const toutes=(PJ ? visible(PJ.t,PJ.hi)
+    : [...(rad.mm||[]),...(ana.mm||[]),...(pv?pv.p90:[])].filter(v=>v!=null&&isFinite(v)));
   const pmax=Math.max(0.8,...toutes);
   const RY=v=>T+hPluie-(v/pmax)*hPluie;
   const bw=Math.max(1.6,(W-L-R)/((x1-x0)/36e5)*0.86);
@@ -212,10 +241,10 @@ function tracer(){
   const barre=(t,v,couleur,alpha)=>{ if(v==null||!(v>0))return;
     c.globalAlpha=alpha; c.fillStyle=couleur;
     c.fillRect(X(t)-bw/2,RY(v),bw,T+hPluie-RY(v)); c.globalAlpha=1; };
-  if(LONG&&HIST.pluie){
+  if(PJ){
     // Sur un an, la pluie horaire n'est ni lisible ni disponible : on montre les
     // cumuls journaliers, qui sont ce qui explique les crues qu'on regarde.
-    HIST.pluie.time.forEach((t,i)=>barre(jour(t),HIST.pluie.mm[i],css("--analyse"),.85));
+    PJ.t.forEach((t,i)=>barre(t,PJ.hi[i],css("--analyse"),.85));
   } else
   ana.time.forEach((s,i)=>barre(dt(s),ana.mm[i],css("--analyse"),.85));
   if(pv){ pv.time.forEach((s,i)=>barre(dt(s),pv.p90[i],css("--prev"),.34));
@@ -225,7 +254,7 @@ function tracer(){
   c.strokeStyle=css("--trait"); c.lineWidth=1;
   c.beginPath(); c.moveTo(L,T+hPluie+.5); c.lineTo(W-R,T+hPluie+.5); c.stroke();
   c.fillStyle=css("--sourdine"); c.font="10px "+css("--mono"); c.textAlign="right";
-  c.fillText(fmt(pmax,1)+(LONG&&HIST.pluie?" mm/j":" mm/h"),L-6,T+10); c.fillText("0",L-6,T+hPluie);
+  c.fillText(fmt(pmax,1)+(PJ?" mm/j":" mm/h"),L-6,T+10); c.fillText("0",L-6,T+hPluie);
   c.textAlign="left"; c.font="600 11px "+css("--titre");
   c.fillText("PLUIE SUR LE BASSIN",L+6,T+11);
 
@@ -286,8 +315,7 @@ function tracer(){
   // L'echelle suit l'eau, pas les seuils : en etiage ils sont trois metres plus
   // haut, et les inclure ecraserait la courbe contre le bord. Un seuil hors
   // champ est alors signale en marge, avec sa distance.
-  const HR=LONG&&HIST.z_rochereau?{t:HIST.z_rochereau.time.map(jour),
-                                  lo:HIST.z_rochereau.min,hi:HIST.z_rochereau.max}:null;
+  const HR=LONG?serieJour(HIST.z_rochereau):null;
   const tObsA=HR?HR.t:tObs, zObsA=HR?HR.hi:zObs;
   let eau=[...visible(tObsA,zObsA),...(HR?visible(HR.t,HR.lo):[]),
            ...visible(tPrev,Zq["5"]),...visible(tPrev,Zq["95"])];
@@ -470,7 +498,7 @@ function pied(){
    cote chez vous. C'est la lecture du decalage, chiffree plutot qu'estimee. */
 function proche(arr,x){let b=-1,bd=Infinity;arr.forEach((v,i)=>{const k=Math.abs(v-x);if(k<bd){bd=k;b=i;}});return b;}
 $("#graphe").addEventListener("mousemove",e=>{
-  const g=G; if(!g)return;
+  const g=G; if(!g||glisse)return;
   const r=e.target.getBoundingClientRect(), px=(e.clientX-r.left)/r.width*g.W;
   const tt=$("#tt");
   if(px<g.L||px>g.W-g.R){ tt.style.opacity=0; tracer(); return; }
@@ -501,7 +529,41 @@ $("#graphe").addEventListener("mousemove",e=>{
   tt.innerHTML=html; tt.style.opacity=1;
   tt.style.left=Math.min(e.clientX+14,innerWidth-250)+"px"; tt.style.top=(e.clientY-10)+"px";
 });
-$("#graphe").addEventListener("mouseleave",()=>{ $("#tt").style.opacity=0; tracer(); });
+$("#graphe").addEventListener("mouseleave",()=>{ $("#tt").style.opacity=0; if(!glisse) tracer(); });
+
+/* Zoom par glissement : on tire horizontalement sur le graphe pour choisir une
+   periode. Le geste se lit sur la figure elle-meme, sans champ de date a
+   remplir, et il fonctionne aussi bien sur trois jours que sur seize ans. */
+let glisse=null;
+const posX=e=>{ const r=$("#graphe").getBoundingClientRect();
+  return (e.clientX-r.left)/r.width*G.W; };
+$("#graphe").addEventListener("mousedown",e=>{
+  if(!G) return;
+  const px=posX(e);
+  if(px<G.L||px>G.W-G.R) return;
+  glisse={a:px,b:px}; e.preventDefault();
+});
+addEventListener("mousemove",e=>{
+  if(!glisse||!G) return;
+  glisse.b=Math.min(Math.max(posX(e),G.L),G.W-G.R);
+  tracer();
+  const c=$("#graphe").getContext("2d");
+  const x=Math.min(glisse.a,glisse.b), l=Math.abs(glisse.b-glisse.a);
+  c.fillStyle=css("--med"); c.globalAlpha=.15; c.fillRect(x,G.T,l,G.H-G.B-G.T);
+  c.globalAlpha=1; c.strokeStyle=css("--med"); c.lineWidth=1;
+  c.beginPath(); c.moveTo(x+.5,G.T); c.lineTo(x+.5,G.H-G.B);
+  c.moveTo(x+l+.5,G.T); c.lineTo(x+l+.5,G.H-G.B); c.stroke();
+});
+addEventListener("mouseup",()=>{
+  if(!glisse||!G){ glisse=null; return; }
+  const {a,b}=glisse; glisse=null;
+  // Un simple clic ne doit pas reduire la periode a rien.
+  if(Math.abs(b-a)<12){ tracer(); return; }
+  const q=px=>new Date(+G.x0+(px-G.L)/(G.W-G.L-G.R)*(G.x1-G.x0));
+  periode={x0:q(Math.min(a,b)), x1:q(Math.max(a,b))};
+  $("#reinit").hidden=false;
+  (( (periode.x1-periode.x0)>20*864e5 )?chargerHistorique():Promise.resolve()).then(tracer);
+});
 
 /* ---------------------------------------------------------------- stations */
 function stations(){
@@ -585,17 +647,46 @@ function fenetre(){
   const debuts=[...(D.stations||[]).map(s=>s.observe.time[0]),D.observe.time[0]]
     .filter(Boolean).map(dt);
   const dispo=debuts.length?(t0-Math.max(...debuts.map(Number)))/864e5:5;
-  const hs=(D.historique||{}).stations||{};
-  const jours=Object.values(hs).map(v=>v.time.length).sort((a,b)=>a-b);
-  const dispoLong=jours.length?jours[0]:0;   // la serie la plus courte fait foi
-  const choix=[1,2,3,5,7,10,15,20].filter(j=>j<=dispo+0.5)
-    .concat([30,90,365].filter(j=>j<=dispoLong+1));
+  // Les fenetres courtes sont bornees par le temps reel embarque dans la page ;
+  // les longues s'appuient sur historique.json, qui couvre seize ans et se
+  // charge a la demande.
+  const choix=[1,2,3,5,7,10,15,20].filter(j=>j<=dispo+0.5).concat([30,90,365]);
   if(!choix.length) choix.push(Math.max(Math.floor(dispo),1));
   if(!choix.includes(joursPasses)) joursPasses=choix[choix.length-1];
   const nom=j=>j===365?"1 an":j===90?"3 mois":j===30?"1 mois":`${j} jour${j>1?"s":""}`;
   sel.innerHTML=choix.map(j=>`<option value="${j}"${j===joursPasses?" selected":""}>`
     +`${nom(j)}${j>20?" · relevés journaliers":""}</option>`).join("");
-  sel.onchange=e=>{ joursPasses=+e.target.value; tracer(); };
+  sel.onchange=e=>{
+    joursPasses=+e.target.value; periode=null;
+    $("#annee").value=""; $("#reinit").hidden=true;
+    // Au-dela de vingt jours il faut la chronique journaliere : on l'attend.
+    (joursPasses>20?chargerHistorique():Promise.resolve()).then(tracer);
+  };
+}
+function annees(){
+  const sel=$("#annee"), bt=$("#reinit"); if(!sel) return;
+  const maj=()=>{ bt.hidden=!periode; };
+  sel.innerHTML='<option value="">en cours</option>';
+  chargerHistorique().then(h=>{
+    if(!h||h.erreur||!h.stations) return;
+    const b=Object.values(h.stations)[0]; if(!b) return;
+    const a0=new Date(b.debut).getUTCFullYear();
+    const a1=jourDe(b.debut,b.max.length-1).getUTCFullYear();
+    const ans=[]; for(let a=a1;a>=a0;a--) ans.push(a);
+    sel.innerHTML='<option value="">en cours</option>'
+      +ans.map(a=>`<option value="${a}">${a}</option>`).join("");
+  });
+  sel.onchange=e=>{
+    const a=+e.target.value;
+    if(!a){ periode=null; maj(); tracer(); return; }
+    // Une annee civile entiere, puis le zoom permet d'y descendre.
+    chargerHistorique().then(()=>{
+      periode={x0:new Date(Date.UTC(a,0,1)), x1:new Date(Date.UTC(a,11,31,23))};
+      maj(); tracer();
+    });
+  };
+  bt.onclick=()=>{ periode=null; $("#annee").value=""; maj(); tracer(); };
+  maj();
 }
 function crues(){
   const sel=$("#crue-ref"); if(!sel) return;
@@ -611,7 +702,7 @@ function crues(){
   sel.onchange=e=>{ choixCrue=e.target.value||null; note(); tracer(); };
   note();
 }
-function rendre(){ entete(); kpis(); fenetre(); crues(); stations(); scenarios(); bilanPluie(); pied(); tracer(); }
+function rendre(){ entete(); kpis(); fenetre(); annees(); crues(); stations(); scenarios(); bilanPluie(); pied(); tracer(); }
 
 /* Curseur commun aux trois stations : la valeur de chacune au meme instant,
    pour chiffrer le decalage plutot que de l'estimer a l'oeil. */

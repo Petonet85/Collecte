@@ -144,60 +144,6 @@ def _stations(prevision, h_saint_laurent, q_amont):
     return out
 
 
-JOURS_HISTORIQUE = 400
-
-
-def historique_long(t0, courbe) -> dict:
-    """Chronique journaliere sur un peu plus d'un an, pour les fenetres longues.
-
-    Hub'Eau ne sert que trente jours de temps reel : au-dela il faut HydroPortail.
-    On resume chaque journee par son minimum et son maximum plutot que par sa
-    moyenne — a cette echelle, un pic de crue dure quelques heures et une moyenne
-    journaliere l'effacerait, alors que c'est precisement ce qu'on vient voir.
-    """
-    import hydroportail as hp
-    from floodcast import sevre
-    from floodcast.sources import meteo
-
-    fin = pd.Timestamp(t0).normalize()
-    deb = fin - pd.Timedelta(days=JOURS_HISTORIQUE)
-    d1, d2 = deb.strftime("%d/%m/%Y"), fin.strftime("%d/%m/%Y")
-    out = {"stations": {}}
-    idx = None
-    for code, grandeur in (("M703243010", "H"), ("M702241010", "Q"), ("M704401010", "Q")):
-        try:
-            ser = hp.serie(code, grandeur, d1, d2)
-        except Exception:  # noqa: BLE001 - l'historique long ne doit pas bloquer la page
-            continue
-        if not len(ser):
-            continue
-        j = ser.resample("1D").agg(["min", "max"]).dropna()
-        idx = j.index if idx is None else idx.union(j.index)
-        out["stations"][code] = {"time": [d.strftime("%Y-%m-%d") for d in j.index],
-                                 "min": [round(float(v), 3) for v in j["min"]],
-                                 "max": [round(float(v), 3) for v in j["max"]]}
-    sl = out["stations"].get("M703243010")
-    if sl:
-        out["z_rochereau"] = {
-            "time": sl["time"],
-            "min": [round(float(v), 3) for v in sevre.niveau_rochereau(np.asarray(sl["min"], float), courbe)],
-            "max": [round(float(v), 3) for v in sevre.niveau_rochereau(np.asarray(sl["max"], float), courbe)],
-        }
-    try:
-        pl = meteo.history_daily(_points_bassin(), start=deb.strftime("%Y-%m-%d"),
-                                 end=fin.strftime("%Y-%m-%d"))["P"]
-        out["pluie"] = {"time": [d.strftime("%Y-%m-%d") for d in pl.index],
-                        "mm": [round(float(v), 2) for v in pl.to_numpy()]}
-    except Exception:  # noqa: BLE001
-        pass
-    return out
-
-
-def _points_bassin():
-    from floodcast import basin as basin_mod
-    return basin_mod.delineate("M703243010").meteo_points
-
-
 def assembler(prevision: dict, horizon_h: int = 72) -> dict:
     from floodcast import sevre
     from floodcast.sources import hubeau as hb
@@ -257,7 +203,6 @@ def assembler(prevision: dict, horizon_h: int = 72) -> dict:
         },
         "seuils": calage["seuils_propriete"],
         "propagation": prevision.get("propagation"),
-        "historique": historique_long(t0, courbe),
         "transfert": prevision.get("transfert"),
         "scenarios": [s for s in calage["scenarios"] if not s.get("ancre")],
         "reperes": [s for s in calage["scenarios"] if s.get("ancre")],

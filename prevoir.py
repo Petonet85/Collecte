@@ -132,6 +132,11 @@ def main(argv=None):
     # Archiver AVANT d'ecrire les pages : si la generation echoue plus loin, la
     # prevision emise reste tracee, ce qui est le seul moment ou on peut la figer.
     archiver(prevision)
+    try:
+        import historique
+        historique.construire(verbose=not args.silencieux)
+    except Exception as exc:  # noqa: BLE001 - l'historique long n'est pas vital
+        print(f"  historique long non mis a jour ({exc})")
     carte = ecrire_page(prevision)
     chemin = ecrire_tableau(prevision, args.horizon)
 
